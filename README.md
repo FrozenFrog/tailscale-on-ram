@@ -10,6 +10,7 @@
 và exit node. Mục tiêu là các router Linux/OpenWrt dung lượng flash thấp:
 binary lớn chạy trong RAM, còn state, cấu hình và boot script nhỏ nằm ở vùng
 lưu được sau reboot.**
+
 > Mục đích chính: **Không cần `tar`, `gzip`, `env` hay Go trên router. Router chỉ cần `sh`, `wget`
 và đủ RAM để tải binary.**
 
@@ -249,3 +250,11 @@ Workflow kiểm tra trước khi tạo release:
 - payload đầy đủ có một file `SHA256SUMS`.
 
 Log mặc định nằm tại `$TAILSCALE_DIR/tailscaled.log`.
+
+## 💖 Special Thanks
+This project would not have been possible without the contributions and inspiration from::
+
+* **Ovler-Young** ([openwrt-tailscale-enabler-fork](https://github.com/Ovler-Young/openwrt-tailscale-enabler))
+* **adyanth** [openwrt-tailscale-enabler-main](https://github.com/adyanth/openwrt-tailscale-enabler)
+
+
