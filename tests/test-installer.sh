@@ -63,6 +63,7 @@ run_install() {
 	PROFILE=$1
 	PACK=$2
 	BINARY_BASE=$3
+	EXPECTED_PROFILE=${4:-$PROFILE}
 	CASE_DIR="$WORK/$PROFILE-$PACK"
 	SUFFIX=
 	[ "$PACK" = "upx" ] && SUFFIX=-upx
@@ -83,19 +84,30 @@ run_install() {
 	test -x "$CASE_DIR/runtime/tailscale"
 	test -x "$CASE_DIR/runtime/tailscale-init"
 	test -x "$CASE_DIR/start.sh"
-	grep -q "TAILSCALE_PROFILE='$PROFILE'" "$CASE_DIR/enabler.conf"
+	grep -q "TAILSCALE_PROFILE='$EXPECTED_PROFILE'" "$CASE_DIR/enabler.conf"
 	grep -q "TAILSCALE_PACK='$PACK'" "$CASE_DIR/enabler.conf"
 	grep -q "TAILSCALE_INSTALLER_FILE='install-http.sh'" "$CASE_DIR/enabler.conf"
 	cmp "$CASE_DIR/runtime/tailscaled" "$WORK/payload/$BINARY_BASE$SUFFIX"
 }
 
+run_install mips plain tailscaled-linux-mips-softfloat
+run_install mips-softfloat upx tailscaled-linux-mips-softfloat
+run_install mips-hardfloat plain tailscaled-linux-mips-hardfloat
+run_install mips-hardfloat upx tailscaled-linux-mips-hardfloat
 run_install mipsle plain tailscaled-linux-mipsle-softfloat
-run_install mips64le plain tailscaled-linux-mips64le-softfloat
-run_install mips64-hardfloat plain tailscaled-linux-mips64-hardfloat
-run_install mips upx tailscaled-linux-mips-softfloat
+run_install mipsle-softfloat upx tailscaled-linux-mipsle-softfloat
+run_install mipsle-hardfloat plain tailscaled-linux-mipsle-hardfloat
 run_install mipsle-hardfloat upx tailscaled-linux-mipsle-hardfloat
+run_install mips64 plain tailscaled-linux-mips64-softfloat
+run_install mips64-softfloat plain tailscaled-linux-mips64-softfloat
+run_install mips64-hardfloat plain tailscaled-linux-mips64-hardfloat
+run_install mips64le plain tailscaled-linux-mips64le-softfloat
+run_install mips64le-softfloat plain tailscaled-linux-mips64le-softfloat
+run_install mips64le-hardfloat plain tailscaled-linux-mips64le-hardfloat
 run_install arm5 plain tailscaled-linux-armv5
+run_install armv5 upx tailscaled-linux-armv5 arm5
 run_install arm7 upx tailscaled-linux-armv7
+run_install armv7 plain tailscaled-linux-armv7 arm7
 
 if sh "$WORK/install-http.sh" mips64 upx http://test.invalid/files 2>/dev/null; then
 	echo "mips64 upx should be rejected" >&2
