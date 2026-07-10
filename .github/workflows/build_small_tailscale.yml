@@ -1,0 +1,213 @@
+name: Build small Tailscale for OpenWrt MIPS
+
+on:
+  workflow_dispatch:
+    inputs:
+      tailscale_ref:
+        description: "Tailscale git tag/branch/ref to build"
+        required: false
+        default: "v1.98.8"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/build_small_tailscale.yml"
+      - "etc/init.d/tailscale"
+      - "usr/bin/tailscale"
+      - "usr/bin/tailscaled"
+      - "README.md"
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: linux-mips-softfloat
+    runs-on: ubuntu-latest
+    env:
+      BINARY_NAME: tailscaled-linux-mips-softfloat
+      GOOS: linux
+      GOARCH: mips
+      GOMIPS: softfloat
+
+    steps:
+      - name: Checkout enabler
+        uses: actions/checkout@v4
+
+      - name: Resolve Tailscale ref
+        id: ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref="${{ github.event.inputs.tailscale_ref || 'v1.98.8' }}"
+          if [ -z "$ref" ]; then
+            ref="v1.98.8"
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout Tailscale
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "${{ steps.ref.outputs.ref }}" https://github.com/tailscale/tailscale.git tailscale
+
+      - name: Set up Go from Tailscale go.mod
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: tailscale/go.mod
+
+      - name: Build combined tailscaled
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cd tailscale
+
+          version_tag="$(git describe --tags --abbrev=0 --always)"
+          version_short="${version_tag#v}"
+          version_hash="$(git rev-parse --short HEAD)"
+          version_long="${version_short}-t${version_hash}"
+
+          # Keep the control plane, embedded CLI, Tailscale SSH, userspace
+          # networking and the features required to advertise an exit node.
+          # featuretags also follows dependencies such as c2n and netstack.
+          features="cli,ssh,advertiseexitnode,osrouter,iptables,bakedroots,cachenetmap,portmapper,listenrawdisco"
+          tags="$(go run ./cmd/featuretags --min --add="$features")"
+          printf '%s\n' "$tags" > ../dist/build-tags.txt
+
+          for required in ssh advertiseexitnode netstack osrouter iptables; do
+            if [[ ",$tags," == *",ts_omit_${required},"* ]]; then
+              echo "Required feature was omitted: $required" >&2
+              exit 1
+            fi
+          done
+
+          CGO_ENABLED=0 \
+          go build \
+            -trimpath \
+            -tags "$tags" \
+            -ldflags "-s -w -buildid= -X tailscale.com/version.longStamp=${version_long} -X tailscale.com/version.shortStamp=${version_short}" \
+            -o "../dist/${BINARY_NAME}" \
+            ./cmd/tailscaled
+
+          cd ..
+          chmod 0755 "dist/${BINARY_NAME}"
+          (
+            cd dist
+            sha256sum "${BINARY_NAME}" > "${BINARY_NAME}.sha256"
+          )
+
+      - name: Do not UPX MIPS binaries
+        shell: bash
+        run: |
+          cat <<'EOF'
+          UPX is intentionally disabled for linux/mips.
+          On low-end OpenWrt/TOTOLINK routers the UPX-packed MIPS binary can fail
+          at runtime with "Trace/breakpoint trap", while the unpacked binary runs.
+          EOF
+
+      - name: Inspect binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="dist/${BINARY_NAME}"
+          file_output="$(file "$binary")"
+          build_info="$(go version -m "$binary")"
+
+          printf '%s\n' "$file_output"
+          printf '%s\n' "$build_info"
+          ls -lh "$binary"
+          cat "${binary}.sha256"
+
+          grep -Fq "ELF 32-bit MSB executable, MIPS" <<<"$file_output"
+          grep -Fq "statically linked" <<<"$file_output"
+          grep -Fq $'build\tCGO_ENABLED=0' <<<"$build_info"
+          grep -Fq $'build\tGOARCH=mips' <<<"$build_info"
+          grep -Fq $'build\tGOOS=linux' <<<"$build_info"
+          grep -Fq $'build\tGOMIPS=softfloat' <<<"$build_info"
+
+      - name: Test MIPS binary and embedded CLI with QEMU
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-user-static
+
+          binary="dist/${BINARY_NAME}"
+          expected_version="$(cat tailscale/VERSION.txt)"
+          daemon_version="$(qemu-mips-static "$binary" --version | head -n 1)"
+          cli_version="$(TS_BE_CLI=1 qemu-mips-static "$binary" version | head -n 1)"
+          TS_BE_CLI=1 qemu-mips-static "$binary" up --help > dist/tailscale-up-help.txt 2>&1
+
+          test "$daemon_version" = "$expected_version"
+          test "$cli_version" = "$expected_version"
+          grep -Fq -- "--ssh" dist/tailscale-up-help.txt
+          grep -Fq -- "--advertise-exit-node" dist/tailscale-up-help.txt
+
+          printf 'daemon version: %s\n' "$daemon_version"
+          printf 'embedded CLI version: %s\n' "$cli_version"
+          printf 'MIPS big-endian QEMU checks passed.\n'
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tailscaled-linux-mips-softfloat
+          path: |
+            dist/tailscaled-linux-mips-softfloat
+            dist/tailscaled-linux-mips-softfloat.sha256
+            dist/build-tags.txt
+            dist/tailscale-up-help.txt
+          if-no-files-found: error
+
+  router-files:
+    name: router wrapper files
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout enabler
+        uses: actions/checkout@v4
+
+      - name: Download tested MIPS binary
+        uses: actions/download-artifact@v4
+        with:
+          name: tailscaled-linux-mips-softfloat
+          path: dist-http
+
+      - name: Package router-side files
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist-router/usr/bin dist-router/etc/init.d
+          cp usr/bin/tailscale dist-router/usr/bin/tailscale
+          cp usr/bin/tailscaled dist-router/usr/bin/tailscaled
+          cp etc/init.d/tailscale dist-router/etc/init.d/tailscale
+          cp README.md dist-router/README.md
+          cp usr/bin/tailscale dist-http/tailscale
+          cp usr/bin/tailscaled dist-http/tailscaled
+          cp etc/init.d/tailscale dist-http/tailscale.init
+          cp README.md dist-http/README.md
+          chmod 0755 dist-router/usr/bin/tailscale dist-router/usr/bin/tailscaled dist-router/etc/init.d/tailscale
+          chmod 0755 dist-http/tailscale dist-http/tailscaled dist-http/tailscale.init dist-http/tailscaled-linux-mips-softfloat
+          (
+            cd dist-http
+            sha256sum -c tailscaled-linux-mips-softfloat.sha256
+          )
+          find dist-router -type f -print | sort
+          find dist-http -type f -print | sort
+
+      - name: Upload router wrapper artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-router-files
+          path: dist-router
+          if-no-files-found: error
+
+      - name: Upload HTTP wrapper artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-http-files
+          path: dist-http
+          if-no-files-found: error
