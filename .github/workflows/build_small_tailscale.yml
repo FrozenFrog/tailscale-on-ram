@@ -74,7 +74,7 @@ jobs:
           # Keep the control plane, embedded CLI, Tailscale SSH, userspace
           # networking and the features required to advertise an exit node.
           # featuretags also follows dependencies such as c2n and netstack.
-          features="cli,ssh,advertiseexitnode,osrouter,iptables,bakedroots,cachenetmap,portmapper,listenrawdisco"
+          features="cli,ssh,advertiseexitnode,osrouter,iptables,bakedroots,cachenetmap,portmapper,listenrawdisco,unixsocketidentity,ipnbus,tailnetlock"
           tags="$(go run ./cmd/featuretags --min --add="$features")"
           printf '%s\n' "$tags" > ../dist/build-tags.txt
 
