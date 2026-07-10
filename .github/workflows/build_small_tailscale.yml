@@ -1,21 +1,39 @@
-name: Build small Tailscale for OpenWrt MIPS
+name: Build and release small Tailscale
 
 on:
   workflow_dispatch:
     inputs:
       tailscale_ref:
-        description: "Tailscale git tag/branch/ref to build"
+        description: Tailscale tag, branch or commit to build
+        required: true
+        default: v1.98.8
+      release_tag:
+        description: Release tag to create; leave empty to build artifacts only
         required: false
-        default: "v1.98.8"
+        default: ""
+      http_base_url:
+        description: Public HTTP URL of the nginx directory
+        required: true
+        default: http://95.111.195.145/openwrt-tailscale-enabler
+      deploy_nginx:
+        description: Upload the payload to nginx with the NGINX_* secrets
+        required: true
+        type: boolean
+        default: false
+      nginx_path:
+        description: Absolute document-root directory on the nginx server
+        required: true
+        default: /var/www/html/openwrt-tailscale-enabler
   push:
     branches:
       - main
+    tags:
+      - "v*"
     paths:
-      - ".github/workflows/build_small_tailscale.yml"
-      - "etc/init.d/tailscale"
-      - "usr/bin/tailscale"
-      - "usr/bin/tailscaled"
-      - "README.md"
+      - .github/workflows/build_small_tailscale.yml
+      - installer/**
+      - router/**
+      - README.md
   pull_request:
     branches:
       - main
@@ -23,15 +41,32 @@ on:
 permissions:
   contents: read
 
+env:
+  DEFAULT_TAILSCALE_REF: v1.98.8
+  UPX_VERSION: 5.2.0
+  UPX_AMD64_SHA256: 3db5d3294707439db97866feab8d75d800f028f48481a40547411824da4288a1
+
 jobs:
   build:
-    name: linux-mips-softfloat
-    runs-on: ubuntu-latest
+    name: ${{ matrix.target }} softfloat
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: mips
+            goarch: mips
+            endian: MSB
+            qemu: qemu-mips-static
+          - target: mipsle
+            goarch: mipsle
+            endian: LSB
+            qemu: qemu-mipsel-static
     env:
-      BINARY_NAME: tailscaled-linux-mips-softfloat
       GOOS: linux
-      GOARCH: mips
+      GOARCH: ${{ matrix.goarch }}
       GOMIPS: softfloat
+      BINARY_NAME: tailscaled-linux-${{ matrix.target }}-softfloat
 
     steps:
       - name: Checkout enabler
@@ -40,53 +75,57 @@ jobs:
       - name: Resolve Tailscale ref
         id: ref
         shell: bash
+        env:
+          INPUT_REF: ${{ inputs.tailscale_ref }}
         run: |
           set -euo pipefail
-          ref="${{ github.event.inputs.tailscale_ref || 'v1.98.8' }}"
-          if [ -z "$ref" ]; then
-            ref="v1.98.8"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            ref="$GITHUB_REF_NAME"
+          elif [[ -n "$INPUT_REF" ]]; then
+            ref="$INPUT_REF"
+          else
+            ref="$DEFAULT_TAILSCALE_REF"
           fi
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout Tailscale
+      - name: Checkout Tailscale source
         shell: bash
         run: |
           set -euo pipefail
-          git clone --depth 1 --branch "${{ steps.ref.outputs.ref }}" https://github.com/tailscale/tailscale.git tailscale
+          git init tailscale
+          git -C tailscale remote add origin https://github.com/tailscale/tailscale.git
+          git -C tailscale fetch --depth 1 origin "${{ steps.ref.outputs.ref }}"
+          git -C tailscale checkout --detach FETCH_HEAD
 
       - name: Set up Go from Tailscale go.mod
         uses: actions/setup-go@v5
         with:
           go-version-file: tailscale/go.mod
+          cache-dependency-path: tailscale/go.sum
 
-      - name: Build combined tailscaled
+      - name: Build minimal combined binary
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
           cd tailscale
 
-          version_tag="$(git describe --tags --abbrev=0 --always)"
-          version_short="${version_tag#v}"
+          version_short="$(tr -d '\r\n' < VERSION.txt)"
           version_hash="$(git rev-parse --short HEAD)"
-          version_long="${version_short}-t${version_hash}"
-
-          # Keep the control plane, embedded CLI, Tailscale SSH, userspace
-          # networking and the features required to advertise an exit node.
-          # featuretags also follows dependencies such as c2n and netstack.
-          features="cli,ssh,advertiseexitnode,osrouter,iptables,bakedroots,cachenetmap,portmapper,listenrawdisco,unixsocketidentity,ipnbus,tailnetlock"
+          version_long="${version_short}-enabler-${version_hash}"
+          features="cli,ssh,advertiseexitnode,advertiseroutes,osrouter,iptables,bakedroots,cachenetmap,portmapper,listenrawdisco,unixsocketidentity,ipnbus,tailnetlock"
           tags="$(go run ./cmd/featuretags --min --add="$features")"
-          printf '%s\n' "$tags" > ../dist/build-tags.txt
+          printf '%s\n' "$tags" > "../dist/build-tags-${{ matrix.target }}.txt"
 
-          for required in ssh advertiseexitnode netstack osrouter iptables; do
+          for required in ssh advertiseexitnode advertiseroutes netstack osrouter iptables unixsocketidentity ipnbus tailnetlock; do
             if [[ ",$tags," == *",ts_omit_${required},"* ]]; then
               echo "Required feature was omitted: $required" >&2
               exit 1
             fi
           done
+          [[ ",$tags," == *",ts_include_cli,"* ]]
 
-          CGO_ENABLED=0 \
-          go build \
+          CGO_ENABLED=0 go build \
             -trimpath \
             -tags "$tags" \
             -ldflags "-s -w -buildid= -X tailscale.com/version.longStamp=${version_long} -X tailscale.com/version.shortStamp=${version_short}" \
@@ -94,22 +133,9 @@ jobs:
             ./cmd/tailscaled
 
           cd ..
-          chmod 0755 "dist/${BINARY_NAME}"
-          (
-            cd dist
-            sha256sum "${BINARY_NAME}" > "${BINARY_NAME}.sha256"
-          )
+          chmod 755 "dist/${BINARY_NAME}"
 
-      - name: Do not UPX MIPS binaries
-        shell: bash
-        run: |
-          cat <<'EOF'
-          UPX is intentionally disabled for linux/mips.
-          On low-end OpenWrt/TOTOLINK routers the UPX-packed MIPS binary can fail
-          at runtime with "Trace/breakpoint trap", while the unpacked binary runs.
-          EOF
-
-      - name: Inspect binary
+      - name: Inspect uncompressed binary
         shell: bash
         run: |
           set -euo pipefail
@@ -119,95 +145,242 @@ jobs:
 
           printf '%s\n' "$file_output"
           printf '%s\n' "$build_info"
-          ls -lh "$binary"
-          cat "${binary}.sha256"
-
-          grep -Fq "ELF 32-bit MSB executable, MIPS" <<<"$file_output"
+          grep -Fq "ELF 32-bit ${{ matrix.endian }} executable, MIPS" <<<"$file_output"
           grep -Fq "statically linked" <<<"$file_output"
           grep -Fq $'build\tCGO_ENABLED=0' <<<"$build_info"
-          grep -Fq $'build\tGOARCH=mips' <<<"$build_info"
-          grep -Fq $'build\tGOOS=linux' <<<"$build_info"
+          grep -Fq $'build\tGOARCH=${{ matrix.goarch }}' <<<"$build_info"
           grep -Fq $'build\tGOMIPS=softfloat' <<<"$build_info"
 
-      - name: Test MIPS binary and embedded CLI with QEMU
+      - name: Install pinned UPX for the GitHub runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="upx-${UPX_VERSION}-amd64_linux.tar.xz"
+          url="https://github.com/upx/upx/releases/download/v${UPX_VERSION}/${archive}"
+          curl -fsSL "$url" -o "/tmp/$archive"
+          echo "${UPX_AMD64_SHA256}  /tmp/$archive" | sha256sum -c -
+          tar -xJf "/tmp/$archive" -C /tmp
+          sudo install -m 0755 "/tmp/upx-${UPX_VERSION}-amd64_linux/upx" /usr/local/bin/upx
+          upx --version
+
+      - name: Create maximum-compression UPX variant
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "dist/${BINARY_NAME}" "dist/${BINARY_NAME}-upx"
+          upx --best --lzma "dist/${BINARY_NAME}-upx"
+          upx -t "dist/${BINARY_NAME}-upx"
+          chmod 755 "dist/${BINARY_NAME}-upx"
+
+      - name: Test plain and UPX binaries with QEMU
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends qemu-user-static
 
-          binary="dist/${BINARY_NAME}"
-          expected_version="$(cat tailscale/VERSION.txt)"
-          daemon_version="$(qemu-mips-static "$binary" --version | head -n 1)"
-          cli_version="$(TS_BE_CLI=1 qemu-mips-static "$binary" version | head -n 1)"
-          TS_BE_CLI=1 qemu-mips-static "$binary" up --help > dist/tailscale-up-help.txt 2>&1
+          expected_version="$(tr -d '\r\n' < tailscale/VERSION.txt)"
+          for suffix in "" "-upx"; do
+            binary="dist/${BINARY_NAME}${suffix}"
+            label="${{ matrix.target }}${suffix}"
+            daemon_version="$(timeout 30s ${{ matrix.qemu }} "$binary" --version | sed -n '1p')"
+            cli_version="$(TS_BE_CLI=1 timeout 30s ${{ matrix.qemu }} "$binary" version | sed -n '1p')"
+            TS_BE_CLI=1 timeout 30s ${{ matrix.qemu }} "$binary" up --help > "dist/up-help-${label}.txt" 2>&1
+            TS_BE_CLI=1 timeout 30s ${{ matrix.qemu }} "$binary" lock --help > "dist/lock-help-${label}.txt" 2>&1
 
-          test "$daemon_version" = "$expected_version"
-          test "$cli_version" = "$expected_version"
-          grep -Fq -- "--ssh" dist/tailscale-up-help.txt
-          grep -Fq -- "--advertise-exit-node" dist/tailscale-up-help.txt
+            test "$daemon_version" = "$expected_version"
+            test "$cli_version" = "$expected_version"
+            grep -Fq -- "--auth-key" "dist/up-help-${label}.txt"
+            grep -Fq -- "--ssh" "dist/up-help-${label}.txt"
+            grep -Fq -- "--advertise-exit-node" "dist/up-help-${label}.txt"
+            grep -Fq -- "--advertise-routes" "dist/up-help-${label}.txt"
+            grep -Fq -- "--netfilter-mode" "dist/up-help-${label}.txt"
+            grep -Fq -- "tailscale lock" "dist/lock-help-${label}.txt"
+            printf '%s: daemon and embedded CLI tests passed\n' "$label"
+          done
 
-          printf 'daemon version: %s\n' "$daemon_version"
-          printf 'embedded CLI version: %s\n' "$cli_version"
-          printf 'MIPS big-endian QEMU checks passed.\n'
+      - name: Write checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum "$BINARY_NAME" > "$BINARY_NAME.sha256"
+          sha256sum "$BINARY_NAME-upx" > "$BINARY_NAME-upx.sha256"
+          ls -lh "$BINARY_NAME" "$BINARY_NAME-upx"
+          cat "$BINARY_NAME.sha256" "$BINARY_NAME-upx.sha256"
 
-      - name: Upload binary artifact
+      - name: Upload target artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tailscaled-linux-mips-softfloat
-          path: |
-            dist/tailscaled-linux-mips-softfloat
-            dist/tailscaled-linux-mips-softfloat.sha256
-            dist/build-tags.txt
-            dist/tailscale-up-help.txt
+          name: tailscale-${{ matrix.target }}-softfloat
+          path: dist/
           if-no-files-found: error
 
-  router-files:
-    name: router wrapper files
-    runs-on: ubuntu-latest
+  package:
+    name: Assemble release and HTTP payload
+    runs-on: ubuntu-24.04
     needs: build
+    env:
+      HTTP_BASE_URL: ${{ inputs.http_base_url || 'http://95.111.195.145/openwrt-tailscale-enabler' }}
+      INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
     steps:
       - name: Checkout enabler
         uses: actions/checkout@v4
 
-      - name: Download tested MIPS binary
+      - name: Download tested binaries
         uses: actions/download-artifact@v4
         with:
-          name: tailscaled-linux-mips-softfloat
-          path: dist-http
+          pattern: tailscale-*-softfloat
+          path: dist-release
+          merge-multiple: true
 
-      - name: Package router-side files
+      - name: Test portable installer
+        shell: bash
+        run: sh tests/test-installer.sh
+
+      - name: Assemble file payload
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p dist-router/usr/bin dist-router/etc/init.d
-          cp usr/bin/tailscale dist-router/usr/bin/tailscale
-          cp usr/bin/tailscaled dist-router/usr/bin/tailscaled
-          cp etc/init.d/tailscale dist-router/etc/init.d/tailscale
-          cp README.md dist-router/README.md
-          cp usr/bin/tailscale dist-http/tailscale
-          cp usr/bin/tailscaled dist-http/tailscaled
-          cp etc/init.d/tailscale dist-http/tailscale.init
-          cp README.md dist-http/README.md
-          chmod 0755 dist-router/usr/bin/tailscale dist-router/usr/bin/tailscaled dist-router/etc/init.d/tailscale
-          chmod 0755 dist-http/tailscale dist-http/tailscaled dist-http/tailscale.init dist-http/tailscaled-linux-mips-softfloat
-          (
-            cd dist-http
-            sha256sum -c tailscaled-linux-mips-softfloat.sha256
-          )
-          find dist-router -type f -print | sort
-          find dist-http -type f -print | sort
+          case "$HTTP_BASE_URL" in
+            http://*|https://*) ;;
+            *) echo "http_base_url must start with http:// or https://" >&2; exit 2 ;;
+          esac
+          [[ "$HTTP_BASE_URL" =~ ^https?://[A-Za-z0-9._:/-]+$ ]]
 
-      - name: Upload router wrapper artifact
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            release_tag="$GITHUB_REF_NAME"
+          else
+            release_tag="$INPUT_RELEASE_TAG"
+          fi
+          if [[ -n "$release_tag" ]]; then
+            https_base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${release_tag}"
+          else
+            https_base="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download"
+          fi
+
+          cp router/tailscale router/tailscale-init router/tailscale-boot router/tailscale-openwrt-init dist-release/
+          cp README.md dist-release/README.vi.md
+          sed \
+            -e "s|__DEFAULT_BASE_URL__|${https_base}|g" \
+            -e "s|__INSTALLER_FILE__|install-https.sh|g" \
+            installer/install.sh > dist-release/install-https.sh
+          sed \
+            -e "s|__DEFAULT_BASE_URL__|${HTTP_BASE_URL%/}|g" \
+            -e "s|__INSTALLER_FILE__|install-http.sh|g" \
+            installer/install.sh > dist-release/install-http.sh
+          chmod 755 dist-release/tailscale dist-release/tailscale-init \
+            dist-release/tailscale-boot dist-release/tailscale-openwrt-init \
+            dist-release/install-https.sh dist-release/install-http.sh \
+            dist-release/tailscaled-linux-*-softfloat*
+
+          ! grep -R "__DEFAULT_BASE_URL__\|__INSTALLER_FILE__" dist-release
+          for script in dist-release/tailscale dist-release/tailscale-init \
+            dist-release/tailscale-boot dist-release/tailscale-openwrt-init \
+            dist-release/install-https.sh dist-release/install-http.sh; do
+            sh -n "$script"
+          done
+
+          cd dist-release
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' \
+            | sort | xargs sha256sum > SHA256SUMS
+          sha256sum -c tailscaled-linux-mips-softfloat.sha256
+          sha256sum -c tailscaled-linux-mips-softfloat-upx.sha256
+          sha256sum -c tailscaled-linux-mipsle-softfloat.sha256
+          sha256sum -c tailscaled-linux-mipsle-softfloat-upx.sha256
+          find . -maxdepth 1 -type f -printf '%f\n' | sort
+
+      - name: Upload complete payload
         uses: actions/upload-artifact@v4
         with:
-          name: openwrt-router-files
-          path: dist-router
+          name: tailscale-release-files
+          path: dist-release/
           if-no-files-found: error
 
-      - name: Upload HTTP wrapper artifact
-        uses: actions/upload-artifact@v4
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-24.04
+    needs: package
+    if: github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+    steps:
+      - name: Download complete payload
+        uses: actions/download-artifact@v4
         with:
-          name: openwrt-http-files
-          path: dist-http
-          if-no-files-found: error
+          name: tailscale-release-files
+          path: dist-release
+
+      - name: Create or update release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="$INPUT_RELEASE_TAG"
+          fi
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" dist-release/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$tag" dist-release/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Small Tailscale $tag" \
+              --notes "Bản tối giản cho TOTOLINK T10 (mipsle) và W300RT (mips), gồm binary thường và UPX."
+          fi
+
+  deploy-nginx:
+    name: Deploy HTTP payload to nginx
+    runs-on: ubuntu-24.04
+    needs: package
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy_nginx
+    env:
+      NGINX_HOST: ${{ secrets.NGINX_HOST }}
+      NGINX_USER: ${{ secrets.NGINX_USER || 'root' }}
+      NGINX_PORT: ${{ secrets.NGINX_PORT || '22' }}
+      NGINX_SSH_PRIVATE_KEY: ${{ secrets.NGINX_SSH_PRIVATE_KEY }}
+      NGINX_KNOWN_HOSTS: ${{ secrets.NGINX_KNOWN_HOSTS }}
+      NGINX_PATH: ${{ inputs.nginx_path }}
+      HTTP_BASE_URL: ${{ inputs.http_base_url }}
+    steps:
+      - name: Download complete payload
+        uses: actions/download-artifact@v4
+        with:
+          name: tailscale-release-files
+          path: dist-release
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$NGINX_HOST"
+          test -n "$NGINX_USER"
+          test -n "$NGINX_SSH_PRIVATE_KEY"
+          [[ "$NGINX_PORT" =~ ^[0-9]+$ ]]
+          [[ "$NGINX_PATH" =~ ^/[A-Za-z0-9._/-]+$ ]]
+
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$NGINX_SSH_PRIVATE_KEY" > "$HOME/.ssh/nginx_deploy"
+          chmod 600 "$HOME/.ssh/nginx_deploy"
+          if [[ -n "$NGINX_KNOWN_HOSTS" ]]; then
+            printf '%s\n' "$NGINX_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          else
+            ssh-keyscan -p "$NGINX_PORT" "$NGINX_HOST" > "$HOME/.ssh/known_hosts"
+          fi
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Upload files and verify HTTP
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/nginx_deploy" -p "$NGINX_PORT" \
+            "$NGINX_USER@$NGINX_HOST" "mkdir -p '$NGINX_PATH'"
+          scp -i "$HOME/.ssh/nginx_deploy" -P "$NGINX_PORT" \
+            dist-release/* "$NGINX_USER@$NGINX_HOST:$NGINX_PATH/"
+          curl -fsSL "${HTTP_BASE_URL%/}/install-http.sh" >/dev/null

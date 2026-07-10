@@ -1,0 +1,41 @@
+#!/bin/sh /etc/rc.common
+
+START=99
+STOP=10
+EXTRA_COMMANDS="status"
+EXTRA_HELP="        status  Show tailscaled status"
+
+CONF=${TAILSCALE_ENABLER_CONF:-/etc/tailscale-enabler.conf}
+
+load_enabler_conf() {
+	[ -f "$CONF" ] && . "$CONF"
+	TAILSCALE_BOOT_SCRIPT=${TAILSCALE_BOOT_SCRIPT:-/overlay/tailscale-state/tailscale-boot.sh}
+	TAILSCALE_DIR=${TAILSCALE_DIR:-/tmp/tailscale}
+}
+
+start() {
+	load_enabler_conf
+	TAILSCALE_ENABLER_CONF="$CONF" "$TAILSCALE_BOOT_SCRIPT"
+}
+
+stop() {
+	load_enabler_conf
+	if [ -x "$TAILSCALE_DIR/tailscale-init" ]; then
+		TAILSCALE_ENABLER_CONF="$CONF" "$TAILSCALE_DIR/tailscale-init" stop
+	fi
+}
+
+restart() {
+	stop
+	start
+}
+
+status() {
+	load_enabler_conf
+	if [ -x "$TAILSCALE_DIR/tailscale-init" ]; then
+		TAILSCALE_ENABLER_CONF="$CONF" "$TAILSCALE_DIR/tailscale-init" status
+	else
+		echo "tailscale runtime is not installed"
+		return 1
+	fi
+}

@@ -1,0 +1,27 @@
+#!/bin/sh
+
+find_conf() {
+	if [ -n "${TAILSCALE_ENABLER_CONF:-}" ]; then
+		echo "$TAILSCALE_ENABLER_CONF"
+	elif [ -f /etc/tailscale-enabler.conf ]; then
+		echo /etc/tailscale-enabler.conf
+	elif [ -f /mnt/tailscale-enabler.conf ]; then
+		echo /mnt/tailscale-enabler.conf
+	else
+		echo /overlay/tailscale-enabler.conf
+	fi
+}
+
+CONF=`find_conf`
+[ -f "$CONF" ] && . "$CONF"
+
+DIR=${TAILSCALE_DIR:-`dirname "$0"`}
+RUNTIME_DIR=${TAILSCALE_RUNTIME_DIR:-/var/run/tailscale}
+SOCKET=${TAILSCALE_SOCKET:-$RUNTIME_DIR/tailscaled.sock}
+
+if [ ! -x "$DIR/tailscaled" ]; then
+	echo "tailscaled not found: $DIR/tailscaled" >&2
+	exit 1
+fi
+
+TS_BE_CLI=1 exec "$DIR/tailscaled" --socket="$SOCKET" "$@"

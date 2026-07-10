@@ -1,0 +1,50 @@
+#!/bin/sh
+
+find_conf() {
+	if [ -n "${TAILSCALE_ENABLER_CONF:-}" ]; then
+		echo "$TAILSCALE_ENABLER_CONF"
+	elif [ -f /etc/tailscale-enabler.conf ]; then
+		echo /etc/tailscale-enabler.conf
+	elif [ -f /mnt/tailscale-enabler.conf ]; then
+		echo /mnt/tailscale-enabler.conf
+	else
+		echo /overlay/tailscale-enabler.conf
+	fi
+}
+
+CONF=`find_conf`
+if [ ! -f "$CONF" ]; then
+	echo "configuration not found: $CONF" >&2
+	exit 1
+fi
+. "$CONF"
+
+DIR=${TAILSCALE_DIR:-/tmp/tailscale}
+BASE_URL=${TAILSCALE_BASE_URL%/}
+INSTALLER=${TAILSCALE_INSTALLER_FILE:-install-http.sh}
+TMP_INSTALLER="$DIR/$INSTALLER"
+RETRIES=${TAILSCALE_DOWNLOAD_RETRIES:-20}
+RETRY_DELAY=${TAILSCALE_DOWNLOAD_RETRY_DELAY:-15}
+
+mkdir -p "$DIR"
+ATTEMPT=1
+while :; do
+	rm -f "$TMP_INSTALLER"
+	echo "downloading $BASE_URL/$INSTALLER (attempt $ATTEMPT)"
+	if wget -O "$TMP_INSTALLER" "$BASE_URL/$INSTALLER"; then
+		break
+	fi
+	if [ "$RETRIES" -gt 0 ] && [ "$ATTEMPT" -ge "$RETRIES" ]; then
+		exit 1
+	fi
+	ATTEMPT=$((ATTEMPT + 1))
+	sleep "$RETRY_DELAY"
+done
+chmod 755 "$TMP_INSTALLER"
+
+TAILSCALE_ENABLER_CONF="$CONF" \
+	TAILSCALE_AUTO_START=1 \
+	exec sh "$TMP_INSTALLER" \
+		"$TAILSCALE_PROFILE" \
+		"${TAILSCALE_PACK:-plain}" \
+		"$BASE_URL"
