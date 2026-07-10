@@ -83,10 +83,9 @@ run_install() {
 	cmp "$CASE_DIR/runtime/tailscaled" "$WORK/payload/$BINARY_BASE$SUFFIX"
 }
 
-run_install t10 plain tailscaled-linux-mipsle-softfloat
+run_install mipsle plain tailscaled-linux-mipsle-softfloat
 run_install mips64le plain tailscaled-linux-mips64le-softfloat
 run_install mips upx tailscaled-linux-mips-softfloat
-run_install w300rt upx tailscaled-linux-mips-softfloat
 run_install arm5 plain tailscaled-linux-armv5
 run_install arm7 upx tailscaled-linux-armv7
 

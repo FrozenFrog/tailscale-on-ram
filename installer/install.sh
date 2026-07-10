@@ -5,7 +5,7 @@ DEFAULT_BASE_URL="__DEFAULT_BASE_URL__"
 DEFAULT_INSTALLER_FILE="__INSTALLER_FILE__"
 
 usage() {
-	echo "usage: sh $0 {mips|mipsle|mips64|mips64le|arm5|arm7|t10|w300rt} [plain|upx] [base-url]" >&2
+	echo "usage: sh $0 {mips|mipsle|mips64|mips64le|arm5|arm7} [plain|upx] [base-url]" >&2
 	exit 2
 }
 
@@ -15,24 +15,6 @@ BASE_INPUT=${3:-}
 BASE_ENV=${TAILSCALE_BASE_URL:-}
 
 case "$PROFILE_INPUT" in
-	t10)
-		PROFILE=t10
-		ARCH=mipsle
-		BINARY_BASE=tailscaled-linux-mipsle-softfloat
-		DEFAULT_DIR=/var/tmp/tailscale
-		DEFAULT_STATE_DIR=/mnt/tailscale-state
-		DEFAULT_CONF=/mnt/tailscale-enabler.conf
-		DEFAULT_BOOT=/mnt/tailscale-start.sh
-		;;
-	w300rt|n300rt)
-		PROFILE=w300rt
-		ARCH=mips
-		BINARY_BASE=tailscaled-linux-mips-softfloat
-		DEFAULT_DIR=/tmp/tailscale
-		DEFAULT_STATE_DIR=/overlay/tailscale-state
-		DEFAULT_CONF=/etc/tailscale-enabler.conf
-		DEFAULT_BOOT=/overlay/tailscale-state/tailscale-boot.sh
-		;;
 	mips|mipsle|mips64|mips64le)
 		PROFILE=$PROFILE_INPUT
 		ARCH=$PROFILE_INPUT
@@ -66,8 +48,7 @@ esac
 CONF=${TAILSCALE_ENABLER_CONF:-$DEFAULT_CONF}
 [ -f "$CONF" ] && . "$CONF"
 
-# Command-line values override an existing configuration file. PROFILE was
-# normalized to t10 or w300rt by the case statement above.
+# Command-line values override an existing configuration file.
 PACK=${PACK_INPUT:-${TAILSCALE_PACK:-plain}}
 BASE_URL=${BASE_INPUT:-${BASE_ENV:-$DEFAULT_BASE_URL}}
 BASE_URL=${BASE_URL%/}

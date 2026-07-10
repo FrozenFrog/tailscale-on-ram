@@ -40,15 +40,8 @@ MIPS64 hiện chỉ có bản thường vì UPX 5.2.0 không nhận dạng ELF M
 | `arm7` | `linux/arm`, `GOARM=7` | `tailscaled-linux-armv7` | `tailscaled-linux-armv7-upx` |
 
 `plain` là lựa chọn mặc định và nên dùng trước. UPX giảm dung lượng tải xuống
-nhưng một số kernel/CPU MIPS cũ có thể không chạy binary đã nén; khi gặp lỗi
-chạy binary, cài lại bằng `plain`.
-
-Các alias legacy vẫn được giữ để tiện dùng với thiết bị đã kiểm thử trước đó:
-
-| Alias | Tương đương | Runtime mặc định | State mặc định |
-| --- | --- | --- | --- |
-| `t10` | `mipsle` với path riêng | `/var/tmp/tailscale` | `/mnt/tailscale-state` |
-| `w300rt` hoặc `n300rt` | `mips` với path OpenWrt cũ | `/tmp/tailscale` | `/overlay/tailscale-state` |
+nhưng một số kernel/CPU MIPS/ARM cũ có thể không chạy binary đã nén; khi gặp
+lỗi chạy binary, cài lại bằng `plain`.
 
 Với profile kiến trúc chung, mặc định là:
 
