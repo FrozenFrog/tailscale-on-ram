@@ -114,11 +114,6 @@ jobs:
             upx: true
             qemu: qemu-arm-static
     env:
-      GOOS: linux
-      GOARCH: ${{ matrix.goarch }}
-      GOARM: ${{ matrix.goarm }}
-      GOMIPS: ${{ matrix.gomips }}
-      GOMIPS64: ${{ matrix.gomips64 }}
       BINARY_NAME: ${{ matrix.binary_name }}
 
     steps:
@@ -167,7 +162,7 @@ jobs:
           version_hash="$(git rev-parse --short HEAD)"
           version_long="${version_short}-enabler-${version_hash}"
           features="cli,ssh,advertiseexitnode,advertiseroutes,osrouter,iptables,bakedroots,cachenetmap,portmapper,listenrawdisco,unixsocketidentity,ipnbus,tailnetlock"
-          tags="$(go run ./cmd/featuretags --min --add="$features")"
+          tags="$(env -u GOOS -u GOARCH -u GOARM -u GOMIPS -u GOMIPS64 go run ./cmd/featuretags --min --add="$features")"
           printf '%s\n' "$tags" > "../dist/build-tags-${{ matrix.target }}.txt"
 
           for required in ssh advertiseexitnode advertiseroutes netstack osrouter iptables unixsocketidentity ipnbus tailnetlock; do
@@ -178,7 +173,22 @@ jobs:
           done
           [[ ",$tags," == *",ts_include_cli,"* ]]
 
-          CGO_ENABLED=0 go build \
+          build_env=(
+            CGO_ENABLED=0
+            GOOS=linux
+            GOARCH=${{ matrix.goarch }}
+          )
+          if [[ -n "${{ matrix.goarm }}" ]]; then
+            build_env+=(GOARM=${{ matrix.goarm }})
+          fi
+          if [[ -n "${{ matrix.gomips }}" ]]; then
+            build_env+=(GOMIPS=${{ matrix.gomips }})
+          fi
+          if [[ -n "${{ matrix.gomips64 }}" ]]; then
+            build_env+=(GOMIPS64=${{ matrix.gomips64 }})
+          fi
+
+          env "${build_env[@]}" go build \
             -trimpath \
             -tags "$tags" \
             -ldflags "-s -w -buildid= -X tailscale.com/version.longStamp=${version_long} -X tailscale.com/version.shortStamp=${version_short}" \
@@ -391,5 +401,5 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "Small Tailscale $tag" \
-              --notes "Bản tối giản cho router Linux MIPS, gồm binary thường và UPX."
+              --notes "Bản tối giản cho router Linux MIPS/ARM, gồm binary thường và UPX khi nền tảng hỗ trợ."
           fi
