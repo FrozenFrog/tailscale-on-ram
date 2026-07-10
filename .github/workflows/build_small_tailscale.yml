@@ -397,15 +397,26 @@ jobs:
             tag="$INPUT_RELEASE_TAG"
           fi
 
+          retry() {
+            local attempt=1
+            while ! "$@"; do
+              if (( attempt >= 5 )); then
+                return 1
+              fi
+              sleep $((attempt * 5))
+              attempt=$((attempt + 1))
+            done
+          }
+
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             while IFS= read -r asset; do
               if [[ -n "$asset" && ! -f "dist-release/$asset" ]]; then
-                gh release delete-asset "$tag" "$asset" --yes --repo "$GITHUB_REPOSITORY"
+                retry gh release delete-asset "$tag" "$asset" --yes --repo "$GITHUB_REPOSITORY"
               fi
             done < <(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
-            gh release upload "$tag" dist-release/* --clobber --repo "$GITHUB_REPOSITORY"
+            retry gh release upload "$tag" dist-release/* --clobber --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "$tag" dist-release/* \
+            retry gh release create "$tag" dist-release/* \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "Small Tailscale $tag" \
