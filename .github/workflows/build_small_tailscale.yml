@@ -11,19 +11,6 @@ on:
         description: Release tag to create; leave empty to build artifacts only
         required: false
         default: ""
-      http_base_url:
-        description: Public HTTP URL of the nginx directory
-        required: true
-        default: http://95.111.195.145/openwrt-tailscale-enabler
-      deploy_nginx:
-        description: Upload the payload to nginx with the NGINX_* secrets
-        required: true
-        type: boolean
-        default: false
-      nginx_path:
-        description: Absolute document-root directory on the nginx server
-        required: true
-        default: /var/www/html/openwrt-tailscale-enabler
   push:
     branches:
       - main
@@ -79,10 +66,10 @@ jobs:
           INPUT_REF: ${{ inputs.tailscale_ref }}
         run: |
           set -euo pipefail
-          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
-            ref="$GITHUB_REF_NAME"
-          elif [[ -n "$INPUT_REF" ]]; then
+          if [[ -n "$INPUT_REF" ]]; then
             ref="$INPUT_REF"
+          elif [[ "$GITHUB_REF_TYPE" == "tag" && "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            ref="$GITHUB_REF_NAME"
           else
             ref="$DEFAULT_TAILSCALE_REF"
           fi
@@ -217,11 +204,10 @@ jobs:
           if-no-files-found: error
 
   package:
-    name: Assemble release and HTTP payload
+    name: Assemble release payload
     runs-on: ubuntu-24.04
     needs: build
     env:
-      HTTP_BASE_URL: ${{ inputs.http_base_url || 'http://95.111.195.145/openwrt-tailscale-enabler' }}
       INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
     steps:
       - name: Checkout enabler
@@ -231,7 +217,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: tailscale-*-softfloat
-          path: dist-release
+          path: build-output
           merge-multiple: true
 
       - name: Test portable installer
@@ -242,12 +228,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          case "$HTTP_BASE_URL" in
-            http://*|https://*) ;;
-            *) echo "http_base_url must start with http:// or https://" >&2; exit 2 ;;
-          esac
-          [[ "$HTTP_BASE_URL" =~ ^https?://[A-Za-z0-9._:/-]+$ ]]
-
           if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
             release_tag="$GITHUB_REF_NAME"
           else
@@ -259,6 +239,9 @@ jobs:
             https_base="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download"
           fi
 
+          mkdir -p dist-release
+          cp build-output/tailscaled-linux-*-softfloat build-output/tailscaled-linux-*-softfloat-upx dist-release/
+          cp build-output/tailscaled-linux-*-softfloat.sha256 build-output/tailscaled-linux-*-softfloat-upx.sha256 dist-release/
           cp router/tailscale router/tailscale-init router/tailscale-boot router/tailscale-openwrt-init dist-release/
           cp README.md dist-release/README.vi.md
           sed \
@@ -266,7 +249,7 @@ jobs:
             -e "s|__INSTALLER_FILE__|install-https.sh|g" \
             installer/install.sh > dist-release/install-https.sh
           sed \
-            -e "s|__DEFAULT_BASE_URL__|${HTTP_BASE_URL%/}|g" \
+            -e "s|__DEFAULT_BASE_URL__||g" \
             -e "s|__INSTALLER_FILE__|install-http.sh|g" \
             installer/install.sh > dist-release/install-http.sh
           chmod 755 dist-release/tailscale dist-release/tailscale-init \
@@ -333,54 +316,3 @@ jobs:
               --title "Small Tailscale $tag" \
               --notes "Bản tối giản cho TOTOLINK T10 (mipsle) và W300RT (mips), gồm binary thường và UPX."
           fi
-
-  deploy-nginx:
-    name: Deploy HTTP payload to nginx
-    runs-on: ubuntu-24.04
-    needs: package
-    if: github.event_name == 'workflow_dispatch' && inputs.deploy_nginx
-    env:
-      NGINX_HOST: ${{ secrets.NGINX_HOST }}
-      NGINX_USER: ${{ secrets.NGINX_USER || 'root' }}
-      NGINX_PORT: ${{ secrets.NGINX_PORT || '22' }}
-      NGINX_SSH_PRIVATE_KEY: ${{ secrets.NGINX_SSH_PRIVATE_KEY }}
-      NGINX_KNOWN_HOSTS: ${{ secrets.NGINX_KNOWN_HOSTS }}
-      NGINX_PATH: ${{ inputs.nginx_path }}
-      HTTP_BASE_URL: ${{ inputs.http_base_url }}
-    steps:
-      - name: Download complete payload
-        uses: actions/download-artifact@v4
-        with:
-          name: tailscale-release-files
-          path: dist-release
-
-      - name: Configure SSH
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "$NGINX_HOST"
-          test -n "$NGINX_USER"
-          test -n "$NGINX_SSH_PRIVATE_KEY"
-          [[ "$NGINX_PORT" =~ ^[0-9]+$ ]]
-          [[ "$NGINX_PATH" =~ ^/[A-Za-z0-9._/-]+$ ]]
-
-          mkdir -p "$HOME/.ssh"
-          chmod 700 "$HOME/.ssh"
-          printf '%s\n' "$NGINX_SSH_PRIVATE_KEY" > "$HOME/.ssh/nginx_deploy"
-          chmod 600 "$HOME/.ssh/nginx_deploy"
-          if [[ -n "$NGINX_KNOWN_HOSTS" ]]; then
-            printf '%s\n' "$NGINX_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
-          else
-            ssh-keyscan -p "$NGINX_PORT" "$NGINX_HOST" > "$HOME/.ssh/known_hosts"
-          fi
-          chmod 600 "$HOME/.ssh/known_hosts"
-
-      - name: Upload files and verify HTTP
-        shell: bash
-        run: |
-          set -euo pipefail
-          ssh -i "$HOME/.ssh/nginx_deploy" -p "$NGINX_PORT" \
-            "$NGINX_USER@$NGINX_HOST" "mkdir -p '$NGINX_PATH'"
-          scp -i "$HOME/.ssh/nginx_deploy" -P "$NGINX_PORT" \
-            dist-release/* "$NGINX_USER@$NGINX_HOST:$NGINX_PATH/"
-          curl -fsSL "${HTTP_BASE_URL%/}/install-http.sh" >/dev/null
