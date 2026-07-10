@@ -24,10 +24,16 @@ chmod 755 "$WORK/fake-tailscaled"
 for binary in \
 	tailscaled-linux-mipsle-softfloat \
 	tailscaled-linux-mipsle-softfloat-upx \
+	tailscaled-linux-mipsle-hardfloat \
+	tailscaled-linux-mipsle-hardfloat-upx \
 	tailscaled-linux-mips-softfloat \
 	tailscaled-linux-mips-softfloat-upx \
+	tailscaled-linux-mips-hardfloat \
+	tailscaled-linux-mips-hardfloat-upx \
 	tailscaled-linux-mips64-softfloat \
+	tailscaled-linux-mips64-hardfloat \
 	tailscaled-linux-mips64le-softfloat \
+	tailscaled-linux-mips64le-hardfloat \
 	tailscaled-linux-armv5 \
 	tailscaled-linux-armv5-upx \
 	tailscaled-linux-armv7 \
@@ -85,12 +91,19 @@ run_install() {
 
 run_install mipsle plain tailscaled-linux-mipsle-softfloat
 run_install mips64le plain tailscaled-linux-mips64le-softfloat
+run_install mips64-hardfloat plain tailscaled-linux-mips64-hardfloat
 run_install mips upx tailscaled-linux-mips-softfloat
+run_install mipsle-hardfloat upx tailscaled-linux-mipsle-hardfloat
 run_install arm5 plain tailscaled-linux-armv5
 run_install arm7 upx tailscaled-linux-armv7
 
 if sh "$WORK/install-http.sh" mips64 upx http://test.invalid/files 2>/dev/null; then
 	echo "mips64 upx should be rejected" >&2
+	exit 1
+fi
+
+if sh "$WORK/install-http.sh" mips64le-hardfloat upx http://test.invalid/files 2>/dev/null; then
+	echo "mips64le-hardfloat upx should be rejected" >&2
 	exit 1
 fi
 

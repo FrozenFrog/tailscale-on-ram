@@ -5,7 +5,7 @@ DEFAULT_BASE_URL="__DEFAULT_BASE_URL__"
 DEFAULT_INSTALLER_FILE="__INSTALLER_FILE__"
 
 usage() {
-	echo "usage: sh $0 {mips|mipsle|mips64|mips64le|arm5|arm7} [plain|upx] [base-url]" >&2
+	echo "usage: sh $0 {mips|mips-hardfloat|mipsle|mipsle-hardfloat|mips64|mips64-hardfloat|mips64le|mips64le-hardfloat|arm5|arm7} [plain|upx] [base-url]" >&2
 	exit 2
 }
 
@@ -15,10 +15,14 @@ BASE_INPUT=${3:-}
 BASE_ENV=${TAILSCALE_BASE_URL:-}
 
 case "$PROFILE_INPUT" in
-	mips|mipsle|mips64|mips64le)
+	mips|mips-softfloat|mips-hardfloat|mipsle|mipsle-softfloat|mipsle-hardfloat|mips64|mips64-softfloat|mips64-hardfloat|mips64le|mips64le-softfloat|mips64le-hardfloat)
 		PROFILE=$PROFILE_INPUT
-		ARCH=$PROFILE_INPUT
-		BINARY_BASE=tailscaled-linux-$ARCH-softfloat
+		ARCH=${PROFILE_INPUT%%-*}
+		case "$PROFILE_INPUT" in
+			*-hardfloat) FLOAT_ABI=hardfloat ;;
+			*) FLOAT_ABI=softfloat ;;
+		esac
+		BINARY_BASE=tailscaled-linux-$ARCH-$FLOAT_ABI
 		DEFAULT_DIR=/tmp/tailscale
 		DEFAULT_STATE_DIR=/etc/tailscale-state
 		DEFAULT_CONF=/etc/tailscale-enabler.conf

@@ -35,13 +35,13 @@ env:
 
 jobs:
   build:
-    name: ${{ matrix.target }} softfloat
+    name: ${{ matrix.target }}
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: mips
+          - target: mips-softfloat
             binary_name: tailscaled-linux-mips-softfloat
             goarch: mips
             goarm: ""
@@ -51,9 +51,23 @@ jobs:
             gomips: softfloat
             gomips64: ""
             float_key: GOMIPS
+            float_abi: softfloat
             upx: true
             qemu: qemu-mips-static
-          - target: mipsle
+          - target: mips-hardfloat
+            binary_name: tailscaled-linux-mips-hardfloat
+            goarch: mips
+            goarm: ""
+            endian: MSB
+            elf_bits: 32-bit
+            file_machine: MIPS
+            gomips: hardfloat
+            gomips64: ""
+            float_key: GOMIPS
+            float_abi: hardfloat
+            upx: true
+            qemu: qemu-mips-static
+          - target: mipsle-softfloat
             binary_name: tailscaled-linux-mipsle-softfloat
             goarch: mipsle
             goarm: ""
@@ -63,9 +77,23 @@ jobs:
             gomips: softfloat
             gomips64: ""
             float_key: GOMIPS
+            float_abi: softfloat
             upx: true
             qemu: qemu-mipsel-static
-          - target: mips64
+          - target: mipsle-hardfloat
+            binary_name: tailscaled-linux-mipsle-hardfloat
+            goarch: mipsle
+            goarm: ""
+            endian: LSB
+            elf_bits: 32-bit
+            file_machine: MIPS
+            gomips: hardfloat
+            gomips64: ""
+            float_key: GOMIPS
+            float_abi: hardfloat
+            upx: true
+            qemu: qemu-mipsel-static
+          - target: mips64-softfloat
             binary_name: tailscaled-linux-mips64-softfloat
             goarch: mips64
             goarm: ""
@@ -75,9 +103,23 @@ jobs:
             gomips: ""
             gomips64: softfloat
             float_key: GOMIPS64
+            float_abi: softfloat
             upx: false
             qemu: qemu-mips64-static
-          - target: mips64le
+          - target: mips64-hardfloat
+            binary_name: tailscaled-linux-mips64-hardfloat
+            goarch: mips64
+            goarm: ""
+            endian: MSB
+            elf_bits: 64-bit
+            file_machine: MIPS
+            gomips: ""
+            gomips64: hardfloat
+            float_key: GOMIPS64
+            float_abi: hardfloat
+            upx: false
+            qemu: qemu-mips64-static
+          - target: mips64le-softfloat
             binary_name: tailscaled-linux-mips64le-softfloat
             goarch: mips64le
             goarm: ""
@@ -87,6 +129,20 @@ jobs:
             gomips: ""
             gomips64: softfloat
             float_key: GOMIPS64
+            float_abi: softfloat
+            upx: false
+            qemu: qemu-mips64el-static
+          - target: mips64le-hardfloat
+            binary_name: tailscaled-linux-mips64le-hardfloat
+            goarch: mips64le
+            goarm: ""
+            endian: LSB
+            elf_bits: 64-bit
+            file_machine: MIPS
+            gomips: ""
+            gomips64: hardfloat
+            float_key: GOMIPS64
+            float_abi: hardfloat
             upx: false
             qemu: qemu-mips64el-static
           - target: arm5
@@ -99,6 +155,7 @@ jobs:
             gomips: ""
             gomips64: ""
             float_key: ""
+            float_abi: ""
             upx: true
             qemu: qemu-arm-static
           - target: arm7
@@ -111,6 +168,7 @@ jobs:
             gomips: ""
             gomips64: ""
             float_key: ""
+            float_abi: ""
             upx: true
             qemu: qemu-arm-static
     env:
@@ -213,7 +271,7 @@ jobs:
           grep -Fq $'build\tCGO_ENABLED=0' <<<"$build_info"
           grep -Fq $'build\tGOARCH=${{ matrix.goarch }}' <<<"$build_info"
           if [[ -n "${{ matrix.float_key }}" ]]; then
-            grep -Fq $'build\t${{ matrix.float_key }}=softfloat' <<<"$build_info"
+            grep -Fq $'build\t${{ matrix.float_key }}=${{ matrix.float_abi }}' <<<"$build_info"
           fi
           if [[ -n "${{ matrix.goarm }}" ]]; then
             grep -Fq $'build\tGOARM=${{ matrix.goarm }}' <<<"$build_info"
