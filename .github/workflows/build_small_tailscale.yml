@@ -42,18 +42,84 @@ jobs:
       matrix:
         include:
           - target: mips
+            binary_name: tailscaled-linux-mips-softfloat
             goarch: mips
+            goarm: ""
             endian: MSB
+            elf_bits: 32-bit
+            file_machine: MIPS
+            gomips: softfloat
+            gomips64: ""
+            float_key: GOMIPS
+            upx: true
             qemu: qemu-mips-static
           - target: mipsle
+            binary_name: tailscaled-linux-mipsle-softfloat
             goarch: mipsle
+            goarm: ""
             endian: LSB
+            elf_bits: 32-bit
+            file_machine: MIPS
+            gomips: softfloat
+            gomips64: ""
+            float_key: GOMIPS
+            upx: true
             qemu: qemu-mipsel-static
+          - target: mips64
+            binary_name: tailscaled-linux-mips64-softfloat
+            goarch: mips64
+            goarm: ""
+            endian: MSB
+            elf_bits: 64-bit
+            file_machine: MIPS
+            gomips: ""
+            gomips64: softfloat
+            float_key: GOMIPS64
+            upx: false
+            qemu: qemu-mips64-static
+          - target: mips64le
+            binary_name: tailscaled-linux-mips64le-softfloat
+            goarch: mips64le
+            goarm: ""
+            endian: LSB
+            elf_bits: 64-bit
+            file_machine: MIPS
+            gomips: ""
+            gomips64: softfloat
+            float_key: GOMIPS64
+            upx: false
+            qemu: qemu-mips64el-static
+          - target: arm5
+            binary_name: tailscaled-linux-armv5
+            goarch: arm
+            goarm: "5"
+            endian: LSB
+            elf_bits: 32-bit
+            file_machine: ARM
+            gomips: ""
+            gomips64: ""
+            float_key: ""
+            upx: true
+            qemu: qemu-arm-static
+          - target: arm7
+            binary_name: tailscaled-linux-armv7
+            goarch: arm
+            goarm: "7"
+            endian: LSB
+            elf_bits: 32-bit
+            file_machine: ARM
+            gomips: ""
+            gomips64: ""
+            float_key: ""
+            upx: true
+            qemu: qemu-arm-static
     env:
       GOOS: linux
       GOARCH: ${{ matrix.goarch }}
-      GOMIPS: softfloat
-      BINARY_NAME: tailscaled-linux-${{ matrix.target }}-softfloat
+      GOARM: ${{ matrix.goarm }}
+      GOMIPS: ${{ matrix.gomips }}
+      GOMIPS64: ${{ matrix.gomips64 }}
+      BINARY_NAME: ${{ matrix.binary_name }}
 
     steps:
       - name: Checkout enabler
@@ -132,13 +198,19 @@ jobs:
 
           printf '%s\n' "$file_output"
           printf '%s\n' "$build_info"
-          grep -Fq "ELF 32-bit ${{ matrix.endian }} executable, MIPS" <<<"$file_output"
+          grep -Fq "ELF ${{ matrix.elf_bits }} ${{ matrix.endian }} executable, ${{ matrix.file_machine }}" <<<"$file_output"
           grep -Fq "statically linked" <<<"$file_output"
           grep -Fq $'build\tCGO_ENABLED=0' <<<"$build_info"
           grep -Fq $'build\tGOARCH=${{ matrix.goarch }}' <<<"$build_info"
-          grep -Fq $'build\tGOMIPS=softfloat' <<<"$build_info"
+          if [[ -n "${{ matrix.float_key }}" ]]; then
+            grep -Fq $'build\t${{ matrix.float_key }}=softfloat' <<<"$build_info"
+          fi
+          if [[ -n "${{ matrix.goarm }}" ]]; then
+            grep -Fq $'build\tGOARM=${{ matrix.goarm }}' <<<"$build_info"
+          fi
 
       - name: Install pinned UPX for the GitHub runner
+        if: matrix.upx
         shell: bash
         run: |
           set -euo pipefail
@@ -151,6 +223,7 @@ jobs:
           upx --version
 
       - name: Create maximum-compression UPX variant
+        if: matrix.upx
         shell: bash
         run: |
           set -euo pipefail
@@ -167,7 +240,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends qemu-user-static
 
           expected_version="$(tr -d '\r\n' < tailscale/VERSION.txt)"
-          for suffix in "" "-upx"; do
+          upx_suffixes=""
+          if [[ "${{ matrix.upx }}" == "true" ]]; then
+            upx_suffixes="-upx"
+          fi
+          for suffix in "" $upx_suffixes; do
             binary="dist/${BINARY_NAME}${suffix}"
             label="${{ matrix.target }}${suffix}"
             daemon_version="$(timeout 30s ${{ matrix.qemu }} "$binary" --version | sed -n '1p')"
@@ -192,14 +269,16 @@ jobs:
           set -euo pipefail
           cd dist
           sha256sum "$BINARY_NAME" > "$BINARY_NAME.sha256"
-          sha256sum "$BINARY_NAME-upx" > "$BINARY_NAME-upx.sha256"
-          ls -lh "$BINARY_NAME" "$BINARY_NAME-upx"
-          cat "$BINARY_NAME.sha256" "$BINARY_NAME-upx.sha256"
+          if [[ -f "$BINARY_NAME-upx" ]]; then
+            sha256sum "$BINARY_NAME-upx" > "$BINARY_NAME-upx.sha256"
+          fi
+          ls -lh "$BINARY_NAME" "$BINARY_NAME"-upx 2>/dev/null || ls -lh "$BINARY_NAME"
+          cat "$BINARY_NAME".sha256 "$BINARY_NAME"-upx.sha256 2>/dev/null || cat "$BINARY_NAME.sha256"
 
       - name: Upload target artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tailscale-${{ matrix.target }}-softfloat
+          name: tailscale-${{ matrix.target }}
           path: dist/
           if-no-files-found: error
 
@@ -216,7 +295,7 @@ jobs:
       - name: Download tested binaries
         uses: actions/download-artifact@v4
         with:
-          pattern: tailscale-*-softfloat
+          pattern: tailscale-*
           path: build-output
           merge-multiple: true
 
@@ -240,8 +319,7 @@ jobs:
           fi
 
           mkdir -p dist-release
-          cp build-output/tailscaled-linux-*-softfloat build-output/tailscaled-linux-*-softfloat-upx dist-release/
-          cp build-output/tailscaled-linux-*-softfloat.sha256 build-output/tailscaled-linux-*-softfloat-upx.sha256 dist-release/
+          find build-output -maxdepth 1 -type f -name 'tailscaled-linux-*' -exec cp {} dist-release/ \;
           cp router/tailscale router/tailscale-init router/tailscale-boot router/tailscale-openwrt-init dist-release/
           cp README.md dist-release/README.vi.md
           sed \
@@ -255,7 +333,7 @@ jobs:
           chmod 755 dist-release/tailscale dist-release/tailscale-init \
             dist-release/tailscale-boot dist-release/tailscale-openwrt-init \
             dist-release/install-https.sh dist-release/install-http.sh \
-            dist-release/tailscaled-linux-*-softfloat*
+            dist-release/tailscaled-linux-*
 
           ! grep -R "__DEFAULT_BASE_URL__\|__INSTALLER_FILE__" dist-release
           for script in dist-release/tailscale dist-release/tailscale-init \
@@ -267,10 +345,9 @@ jobs:
           cd dist-release
           find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' \
             | sort | xargs sha256sum > SHA256SUMS
-          sha256sum -c tailscaled-linux-mips-softfloat.sha256
-          sha256sum -c tailscaled-linux-mips-softfloat-upx.sha256
-          sha256sum -c tailscaled-linux-mipsle-softfloat.sha256
-          sha256sum -c tailscaled-linux-mipsle-softfloat-upx.sha256
+          for checksum in tailscaled-linux-*.sha256; do
+            sha256sum -c "$checksum"
+          done
           find . -maxdepth 1 -type f -printf '%f\n' | sort
 
       - name: Upload complete payload
@@ -314,5 +391,5 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
               --title "Small Tailscale $tag" \
-              --notes "Bản tối giản cho TOTOLINK T10 (mipsle) và W300RT (mips), gồm binary thường và UPX."
+              --notes "Bản tối giản cho router Linux MIPS, gồm binary thường và UPX."
           fi

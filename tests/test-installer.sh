@@ -25,7 +25,13 @@ for binary in \
 	tailscaled-linux-mipsle-softfloat \
 	tailscaled-linux-mipsle-softfloat-upx \
 	tailscaled-linux-mips-softfloat \
-	tailscaled-linux-mips-softfloat-upx; do
+	tailscaled-linux-mips-softfloat-upx \
+	tailscaled-linux-mips64-softfloat \
+	tailscaled-linux-mips64le-softfloat \
+	tailscaled-linux-armv5 \
+	tailscaled-linux-armv5-upx \
+	tailscaled-linux-armv7 \
+	tailscaled-linux-armv7-upx; do
 	cp "$WORK/fake-tailscaled" "$WORK/payload/$binary"
 	(
 		cd "$WORK/payload"
@@ -50,8 +56,10 @@ sed \
 run_install() {
 	PROFILE=$1
 	PACK=$2
-	ARCH=$3
+	BINARY_BASE=$3
 	CASE_DIR="$WORK/$PROFILE-$PACK"
+	SUFFIX=
+	[ "$PACK" = "upx" ] && SUFFIX=-upx
 	mkdir -p "$CASE_DIR/runtime" "$CASE_DIR/state" "$CASE_DIR/run"
 
 	PATH="$WORK/bin:$PATH" \
@@ -72,31 +80,19 @@ run_install() {
 	grep -q "TAILSCALE_PROFILE='$PROFILE'" "$CASE_DIR/enabler.conf"
 	grep -q "TAILSCALE_PACK='$PACK'" "$CASE_DIR/enabler.conf"
 	grep -q "TAILSCALE_INSTALLER_FILE='install-http.sh'" "$CASE_DIR/enabler.conf"
-	cmp "$CASE_DIR/runtime/tailscaled" "$WORK/payload/tailscaled-linux-$ARCH-softfloat${PACK#plain}"
+	cmp "$CASE_DIR/runtime/tailscaled" "$WORK/payload/$BINARY_BASE$SUFFIX"
 }
 
-run_install t10 plain mipsle
+run_install t10 plain tailscaled-linux-mipsle-softfloat
+run_install mips64le plain tailscaled-linux-mips64le-softfloat
+run_install mips upx tailscaled-linux-mips-softfloat
+run_install w300rt upx tailscaled-linux-mips-softfloat
+run_install arm5 plain tailscaled-linux-armv5
+run_install arm7 upx tailscaled-linux-armv7
 
-# The UPX suffix is handled separately because ${PACK#plain} is empty only for
-# the plain case.
-PROFILE=w300rt
-PACK=upx
-CASE_DIR="$WORK/$PROFILE-$PACK"
-mkdir -p "$CASE_DIR/runtime" "$CASE_DIR/state" "$CASE_DIR/run"
-PATH="$WORK/bin:$PATH" \
-TEST_PAYLOAD="$WORK/payload" \
-TAILSCALE_DIR="$CASE_DIR/runtime" \
-TAILSCALE_STATE_DIR="$CASE_DIR/state" \
-TAILSCALE_RUNTIME_DIR="$CASE_DIR/run" \
-TAILSCALE_BOOT_SCRIPT="$CASE_DIR/start.sh" \
-TAILSCALE_ENABLER_CONF="$CASE_DIR/enabler.conf" \
-TAILSCALE_AUTO_START=0 \
-TAILSCALE_INSTALL_OPENWRT_INIT=0 \
-sh "$WORK/install-http.sh" w300rt upx http://test.invalid/files
-
-test -x "$CASE_DIR/runtime/tailscaled"
-grep -q "TAILSCALE_PROFILE='w300rt'" "$CASE_DIR/enabler.conf"
-grep -q "TAILSCALE_PACK='upx'" "$CASE_DIR/enabler.conf"
-cmp "$CASE_DIR/runtime/tailscaled" "$WORK/payload/tailscaled-linux-mips-softfloat-upx"
+if sh "$WORK/install-http.sh" mips64 upx http://test.invalid/files 2>/dev/null; then
+	echo "mips64 upx should be rejected" >&2
+	exit 1
+fi
 
 echo "installer tests passed"

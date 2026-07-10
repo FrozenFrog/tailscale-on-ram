@@ -5,7 +5,7 @@ DEFAULT_BASE_URL="__DEFAULT_BASE_URL__"
 DEFAULT_INSTALLER_FILE="__INSTALLER_FILE__"
 
 usage() {
-	echo "usage: sh $0 {t10|w300rt|mipsle|mips} [plain|upx] [base-url]" >&2
+	echo "usage: sh $0 {mips|mipsle|mips64|mips64le|arm5|arm7|t10|w300rt} [plain|upx] [base-url]" >&2
 	exit 2
 }
 
@@ -15,21 +15,50 @@ BASE_INPUT=${3:-}
 BASE_ENV=${TAILSCALE_BASE_URL:-}
 
 case "$PROFILE_INPUT" in
-	t10|mipsle)
+	t10)
 		PROFILE=t10
 		ARCH=mipsle
+		BINARY_BASE=tailscaled-linux-mipsle-softfloat
 		DEFAULT_DIR=/var/tmp/tailscale
 		DEFAULT_STATE_DIR=/mnt/tailscale-state
 		DEFAULT_CONF=/mnt/tailscale-enabler.conf
 		DEFAULT_BOOT=/mnt/tailscale-start.sh
 		;;
-	w300rt|n300rt|mips)
+	w300rt|n300rt)
 		PROFILE=w300rt
 		ARCH=mips
+		BINARY_BASE=tailscaled-linux-mips-softfloat
 		DEFAULT_DIR=/tmp/tailscale
 		DEFAULT_STATE_DIR=/overlay/tailscale-state
 		DEFAULT_CONF=/etc/tailscale-enabler.conf
 		DEFAULT_BOOT=/overlay/tailscale-state/tailscale-boot.sh
+		;;
+	mips|mipsle|mips64|mips64le)
+		PROFILE=$PROFILE_INPUT
+		ARCH=$PROFILE_INPUT
+		BINARY_BASE=tailscaled-linux-$ARCH-softfloat
+		DEFAULT_DIR=/tmp/tailscale
+		DEFAULT_STATE_DIR=/etc/tailscale-state
+		DEFAULT_CONF=/etc/tailscale-enabler.conf
+		DEFAULT_BOOT=/etc/tailscale-boot.sh
+		;;
+	arm5|armv5)
+		PROFILE=arm5
+		ARCH=armv5
+		BINARY_BASE=tailscaled-linux-armv5
+		DEFAULT_DIR=/tmp/tailscale
+		DEFAULT_STATE_DIR=/etc/tailscale-state
+		DEFAULT_CONF=/etc/tailscale-enabler.conf
+		DEFAULT_BOOT=/etc/tailscale-boot.sh
+		;;
+	arm7|armv7)
+		PROFILE=arm7
+		ARCH=armv7
+		BINARY_BASE=tailscaled-linux-armv7
+		DEFAULT_DIR=/tmp/tailscale
+		DEFAULT_STATE_DIR=/etc/tailscale-state
+		DEFAULT_CONF=/etc/tailscale-enabler.conf
+		DEFAULT_BOOT=/etc/tailscale-boot.sh
 		;;
 	*) usage ;;
 esac
@@ -55,9 +84,16 @@ DOWNLOAD_RETRY_DELAY=${TAILSCALE_DOWNLOAD_RETRY_DELAY:-15}
 INSTALLER_FILE=$DEFAULT_INSTALLER_FILE
 
 case "$PACK" in
-	plain) BINARY="tailscaled-linux-$ARCH-softfloat" ;;
-	upx) BINARY="tailscaled-linux-$ARCH-softfloat-upx" ;;
+	plain) BINARY=$BINARY_BASE ;;
+	upx) BINARY="$BINARY_BASE-upx" ;;
 	*) usage ;;
+esac
+
+case "$PACK:$ARCH" in
+	upx:mips64|upx:mips64le)
+		echo "UPX pack is not available for $ARCH with the current UPX toolchain" >&2
+		exit 2
+		;;
 esac
 
 case "$BASE_URL" in
@@ -142,7 +178,7 @@ TAILSCALE_DOWNLOAD_RETRY_DELAY='$DOWNLOAD_RETRY_DELAY'
 EOF
 chmod 600 "$CONF" 2>/dev/null || true
 
-if [ "$PROFILE" = "w300rt" ] && [ "$INSTALL_OPENWRT_INIT" = "1" ] && \
+if [ "$INSTALL_OPENWRT_INIT" = "1" ] && [ -x /etc/rc.common ] && \
 	[ -d /etc/init.d ] && [ -w /etc/init.d ]; then
 	download tailscale-openwrt-init /etc/init.d/tailscale || exit 1
 	chmod 755 /etc/init.d/tailscale
