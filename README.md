@@ -1,17 +1,21 @@
-# Tailscale tối giản cho router Linux MIPS/ARM
+# 🏡 Tailscale tối giản cho router Linux MIPS/ARM
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+![Status](https://img.shields.io/badge/status-active-success.svg)
+![Backup](https://img.shields.io/badge/backup-automated-blue.svg)
+![Tailscale](https://img.shields.io/badge/stack-tailscale-brown.svg)
+![Made with Love](https://img.shields.io/badge/made%20with-❤️-ff69b4.svg)
 
-[![Build and release](https://github.com/FrozenFrog/openwrt-tailscale-enabler/actions/workflows/build_small_tailscale.yml/badge.svg)](https://github.com/FrozenFrog/openwrt-tailscale-enabler/actions/workflows/build_small_tailscale.yml)
-
-Dự án này dùng GitHub Actions để build `tailscaled` dạng static, có sẵn CLI
+> **Dự án này dùng GitHub Actions để build `tailscaled` dạng static, có sẵn CLI
 `tailscale` bên trong cùng các thành phần cần cho Tailscale SSH, subnet route
 và exit node. Mục tiêu là các router Linux/OpenWrt dung lượng flash thấp:
 binary lớn chạy trong RAM, còn state, cấu hình và boot script nhỏ nằm ở vùng
-lưu được sau reboot.
+lưu được sau reboot.**
+> Mục đích chính: **Không cần `tar`, `gzip`, `env` hay Go trên router. Router chỉ cần `sh`, `wget`
+và đủ RAM để tải binary.**
 
-Không cần `tar`, `gzip`, `env` hay Go trên router. Router chỉ cần `sh`, `wget`
-và đủ RAM để tải binary.
 
-## Hai cách cài đặt
+
+## 🚀 Hai cách cài đặt
 
 Có hai luồng triển khai, tùy BusyBox `wget` trên router có hỗ trợ HTTPS hay
 không.
@@ -218,9 +222,9 @@ Payload release gồm:
 
 - binary thường cho `mips`, `mipsle`, `mips64`, `mips64le`, `arm5`, `arm7`;
 - binary UPX cho `mips`, `mipsle`, `arm5`, `arm7`;
-- checksum riêng cho từng binary và file `SHA256SUMS`;
+- một file checksum tổng `SHA256SUMS`;
 - `install-https.sh`, `install-http.sh`;
-- wrapper CLI `tailscale`, script init/boot và `README.vi.md`.
+- wrapper CLI `tailscale` và script init/boot.
 
 Workflow kiểm tra trước khi tạo release:
 
@@ -229,6 +233,6 @@ Workflow kiểm tra trước khi tạo release:
 - CLI có `--auth-key`, `--ssh`, `--advertise-exit-node`,
   `--advertise-routes`, `--netfilter-mode`;
 - các binary UPX vượt qua `upx -t` và QEMU;
-- mọi binary có checksum riêng, payload đầy đủ có `SHA256SUMS`.
+- payload đầy đủ có một file `SHA256SUMS`.
 
 Log mặc định nằm tại `$TAILSCALE_DIR/tailscaled.log`.

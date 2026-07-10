@@ -119,7 +119,12 @@ download() {
 download "$BINARY" "$DIR/$BINARY" || exit 1
 
 if command -v sha256sum >/dev/null 2>&1; then
-	download "$BINARY.sha256" "$DIR/$BINARY.sha256" || exit 1
+	download SHA256SUMS "$DIR/SHA256SUMS" || exit 1
+	if ! grep "  $BINARY\$" "$DIR/SHA256SUMS" > "$DIR/$BINARY.sha256"; then
+		echo "SHA-256 checksum for $BINARY is missing" >&2
+		rm -f "$DIR/$BINARY"
+		exit 1
+	fi
 	if ! (cd "$DIR" && sha256sum -c "$BINARY.sha256"); then
 		echo "SHA-256 verification failed" >&2
 		rm -f "$DIR/$BINARY"

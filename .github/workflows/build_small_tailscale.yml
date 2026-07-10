@@ -328,10 +328,16 @@ jobs:
             https_base="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download"
           fi
 
+          (
+            cd build-output
+            for checksum in tailscaled-linux-*.sha256; do
+              sha256sum -c "$checksum"
+            done
+          )
+
           mkdir -p dist-release
-          find build-output -maxdepth 1 -type f -name 'tailscaled-linux-*' -exec cp {} dist-release/ \;
+          find build-output -maxdepth 1 -type f -name 'tailscaled-linux-*' ! -name '*.sha256' -exec cp {} dist-release/ \;
           cp router/tailscale router/tailscale-init router/tailscale-boot router/tailscale-openwrt-init dist-release/
-          cp README.md dist-release/README.vi.md
           sed \
             -e "s|__DEFAULT_BASE_URL__|${https_base}|g" \
             -e "s|__INSTALLER_FILE__|install-https.sh|g" \
@@ -355,9 +361,6 @@ jobs:
           cd dist-release
           find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' \
             | sort | xargs sha256sum > SHA256SUMS
-          for checksum in tailscaled-linux-*.sha256; do
-            sha256sum -c "$checksum"
-          done
           find . -maxdepth 1 -type f -printf '%f\n' | sort
 
       - name: Upload complete payload
@@ -395,6 +398,11 @@ jobs:
           fi
 
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            while IFS= read -r asset; do
+              if [[ -n "$asset" && ! -f "dist-release/$asset" ]]; then
+                gh release delete-asset "$tag" "$asset" --yes --repo "$GITHUB_REPOSITORY"
+              fi
+            done < <(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')
             gh release upload "$tag" dist-release/* --clobber --repo "$GITHUB_REPOSITORY"
           else
             gh release create "$tag" dist-release/* \

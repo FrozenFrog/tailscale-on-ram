@@ -33,11 +33,11 @@ for binary in \
 	tailscaled-linux-armv7 \
 	tailscaled-linux-armv7-upx; do
 	cp "$WORK/fake-tailscaled" "$WORK/payload/$binary"
-	(
-		cd "$WORK/payload"
-		sha256sum "$binary" > "$binary.sha256"
-	)
 done
+(
+	cd "$WORK/payload"
+	ls tailscaled-linux-* | sort | xargs sha256sum > SHA256SUMS
+)
 
 cat > "$WORK/bin/wget" <<'EOF'
 #!/bin/sh
