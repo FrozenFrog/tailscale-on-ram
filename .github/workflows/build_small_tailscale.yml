@@ -421,6 +421,12 @@ jobs:
             | sort | xargs sha256sum > SHA256SUMS
           find . -maxdepth 1 -type f -printf '%f\n' | sort
 
+          # One-shot payload for plain-HTTP mirrors: download this archive
+          # and extract it straight into the web directory.
+          cd ..
+          tar -czf tailscale-release-files.tar.gz -C dist-release .
+          mv tailscale-release-files.tar.gz dist-release/
+
       - name: Upload complete payload
         uses: actions/upload-artifact@v4
         with:

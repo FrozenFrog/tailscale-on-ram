@@ -75,7 +75,7 @@ Tải installer trực tiếp từ GitHub Release. Ví dụ cho thiết bị `mi
 
 ```sh
 TAG=v1.98.8
-wget -O /tmp/install-tailscale.sh https://github.com/FrozenFrog/openwrt-tailscale/releases/download/$TAG/install-https.sh
+wget -O /tmp/install-tailscale.sh https://github.com/FrozenFrog/tailscale-on-ram/releases/download/$TAG/install-https.sh
 sh /tmp/install-tailscale.sh mipsle plain
 ```
 
@@ -83,7 +83,7 @@ Ví dụ dùng bản UPX cho thiết bị `arm7`:
 
 ```sh
 TAG=v1.98.8
-wget -O /tmp/install-tailscale.sh https://github.com/FrozenFrog/openwrt-tailscale/releases/download/$TAG/install-https.sh
+wget -O /tmp/install-tailscale.sh https://github.com/FrozenFrog/tailscale-on-ram/releases/download/$TAG/install-https.sh
 sh /tmp/install-tailscale.sh arm7 upx
 ```
 
@@ -102,8 +102,20 @@ sh /tmp/install-tailscale.sh mips plain https://github.com/OWNER/REPO/releases/d
 
 ## Cách 2: wget chỉ tải được HTTP
 
-Tải toàn bộ asset trong GitHub Release hoặc artifact `tailscale-release-files`
-lên cùng một thư mục nginx HTTP. Router chỉ cần tải một file đầu vào:
+Đưa toàn bộ payload release lên cùng một thư mục nginx HTTP. Cách nhanh nhất
+là tải file nén `tailscale-release-files.tar.gz` trong release rồi giải nén
+thẳng vào thư mục web:
+
+```sh
+TAG=v1.98.8
+cd /var/www/openwrt-tailscale-enabler
+wget https://github.com/FrozenFrog/tailscale-on-ram/releases/download/$TAG/tailscale-release-files.tar.gz
+tar -xzf tailscale-release-files.tar.gz
+rm tailscale-release-files.tar.gz
+```
+
+(Hoặc tải từng asset trong GitHub Release / artifact `tailscale-release-files`
+lên cùng thư mục đó.) Router chỉ cần tải một file đầu vào:
 
 ```sh
 SERVER=http://95.111.195.145/openwrt-tailscale-enabler
