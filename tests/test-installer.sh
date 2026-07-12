@@ -17,9 +17,19 @@ if [ "${1:-}" = "--version" ]; then
 	echo 1.98.8
 	exit 0
 fi
-exit 0
+exec sleep 30
 EOF
 chmod 755 "$WORK/fake-tailscaled"
+
+cat > "$WORK/fake-tailscaled-dying" <<'EOF'
+#!/bin/sh
+if [ "${1:-}" = "--version" ]; then
+	echo 1.98.8
+	exit 0
+fi
+exit 0
+EOF
+chmod 755 "$WORK/fake-tailscaled-dying"
 
 for binary in \
 	tailscaled-linux-mipsle-softfloat \
@@ -87,6 +97,8 @@ run_install() {
 	grep -q "TAILSCALE_PROFILE='$EXPECTED_PROFILE'" "$CASE_DIR/enabler.conf"
 	grep -q "TAILSCALE_PACK='$PACK'" "$CASE_DIR/enabler.conf"
 	grep -q "TAILSCALE_INSTALLER_FILE='install-http.sh'" "$CASE_DIR/enabler.conf"
+	grep -q "TAILSCALE_TUN='tailscale0'" "$CASE_DIR/enabler.conf"
+	grep -q "TAILSCALE_ENABLE_FORWARDING='1'" "$CASE_DIR/enabler.conf"
 	cmp "$CASE_DIR/runtime/tailscaled" "$WORK/payload/$BINARY_BASE$SUFFIX"
 }
 
@@ -118,5 +130,59 @@ if sh "$WORK/install-http.sh" mips64le-hardfloat upx http://test.invalid/files 2
 	echo "mips64le-hardfloat upx should be rejected" >&2
 	exit 1
 fi
+
+# tailscale-init lifecycle: TUN fallback, status, stop
+LC="$WORK/lifecycle"
+mkdir -p "$LC/runtime" "$LC/state" "$LC/run"
+cp "$ROOT/router/tailscale-init" "$LC/runtime/tailscale-init"
+cp "$WORK/fake-tailscaled" "$LC/runtime/tailscaled"
+chmod 755 "$LC/runtime/tailscale-init" "$LC/runtime/tailscaled"
+cat > "$LC/enabler.conf" <<EOF
+TAILSCALE_DIR='$LC/runtime'
+TAILSCALE_STATE_DIR='$LC/state'
+TAILSCALE_RUNTIME_DIR='$LC/run'
+TAILSCALE_TUN='tailscale0'
+TAILSCALE_ENABLE_FORWARDING='0'
+EOF
+: > "$LC/proc-misc"
+
+TAILSCALE_ENABLER_CONF="$LC/enabler.conf" \
+	TAILSCALE_PROC_MISC="$LC/proc-misc" \
+	sh "$LC/runtime/tailscale-init" start 2>"$LC/start.err"
+grep -q "TAILSCALE_TUN='userspace-networking'" "$LC/enabler.conf"
+grep -q "falling back to userspace-networking" "$LC/start.err"
+test -f "$LC/run/tailscaled.pid"
+TAILSCALE_ENABLER_CONF="$LC/enabler.conf" sh "$LC/runtime/tailscale-init" status
+
+TAILSCALE_ENABLER_CONF="$LC/enabler.conf" sh "$LC/runtime/tailscale-init" stop
+test ! -f "$LC/run/tailscaled.pid"
+test ! -e "$LC/run/tailscaled.sock"
+if TAILSCALE_ENABLER_CONF="$LC/enabler.conf" \
+	sh "$LC/runtime/tailscale-init" status >/dev/null; then
+	echo "status should fail after stop" >&2
+	exit 1
+fi
+
+# tailscale-init start must fail when the daemon dies right away
+FC="$WORK/lifecycle-fail"
+mkdir -p "$FC/runtime" "$FC/state" "$FC/run"
+cp "$ROOT/router/tailscale-init" "$FC/runtime/tailscale-init"
+cp "$WORK/fake-tailscaled-dying" "$FC/runtime/tailscaled"
+chmod 755 "$FC/runtime/tailscale-init" "$FC/runtime/tailscaled"
+cat > "$FC/enabler.conf" <<EOF
+TAILSCALE_DIR='$FC/runtime'
+TAILSCALE_STATE_DIR='$FC/state'
+TAILSCALE_RUNTIME_DIR='$FC/run'
+TAILSCALE_TUN='userspace-networking'
+TAILSCALE_ENABLE_FORWARDING='0'
+EOF
+
+if TAILSCALE_ENABLER_CONF="$FC/enabler.conf" \
+	sh "$FC/runtime/tailscale-init" start 2>"$FC/start.err"; then
+	echo "start should fail when tailscaled dies right away" >&2
+	exit 1
+fi
+grep -q "exited right after start" "$FC/start.err"
+test ! -f "$FC/run/tailscaled.pid"
 
 echo "installer tests passed"

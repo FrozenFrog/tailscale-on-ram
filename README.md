@@ -200,23 +200,32 @@ TAILSCALE_DOWNLOAD_RETRY_DELAY='15'
 
 ## Exit node
 
-Tailscale SSH có thể chạy với `userspace-networking`. Exit node định tuyến thật
-cần `/dev/net/tun`, iptables và IP forwarding. Sửa file cấu hình:
+Mặc định đã hướng tới exit node: cấu hình được ghi với `TAILSCALE_TUN='tailscale0'`
+và `TAILSCALE_ENABLE_FORWARDING='1'`, không cần sửa file cấu hình nữa. Khi
+khởi động, `tailscale-init` tự nạp module `tun` (modprobe/insmod), tạo
+`/dev/net/tun` và kiểm tra driver qua `/proc/misc`.
 
-```sh
-TAILSCALE_TUN='tailscale0'
-TAILSCALE_ENABLE_FORWARDING='1'
-```
+Nếu thiết bị không có driver TUN, script tự fallback về
+`userspace-networking` (Tailscale SSH vẫn chạy, nhưng exit node và subnet
+route bị tắt) và ghi lựa chọn đó ngược vào file cấu hình để các lần khởi động
+sau không phải dò lại. Trên firmware Padavan, chạy thêm `mtd_storage.sh save`
+để giữ file cấu hình trong `/etc/storage` qua reboot. Sau này nếu cài được
+driver TUN (OpenWrt: gói `kmod-tun`), sửa lại `TAILSCALE_TUN='tailscale0'`
+trong file cấu hình rồi restart.
 
-Khởi động lại daemon rồi quảng bá exit node:
+Quảng bá exit node (chỉ cần chạy một lần, pref được lưu trong state):
 
 ```sh
 TAILSCALE_ENABLER_CONF=/path/to/tailscale-enabler.conf $TAILSCALE_DIR/tailscale-init restart
 $TAILSCALE_DIR/tailscale up --accept-dns=false --ssh --advertise-exit-node --netfilter-mode=on
 ```
 
-Quản trị viên tailnet vẫn phải duyệt exit node. Nếu firmware thiếu TUN hoặc
-iptables phù hợp, giữ `TAILSCALE_TUN='userspace-networking'`.
+Quản trị viên tailnet vẫn phải duyệt exit node. Exit node định tuyến thật cần
+iptables trên thiết bị; nếu thiếu iptables phù hợp, có thể thử
+`--netfilter-mode=off` và tự cấu hình firewall.
+
+Nếu `tailscaled` thoát ngay sau khi start, `tailscale-init` sẽ in các dòng
+cuối của `$TAILSCALE_DIR/tailscaled.log` để chẩn đoán.
 
 ## Build và tạo GitHub Release
 

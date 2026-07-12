@@ -5,6 +5,8 @@ find_conf() {
 		echo "$TAILSCALE_ENABLER_CONF"
 	elif [ -f /etc/tailscale-enabler.conf ]; then
 		echo /etc/tailscale-enabler.conf
+	elif [ -f /etc/storage/tailscale-enabler.conf ]; then
+		echo /etc/storage/tailscale-enabler.conf
 	elif [ -f /mnt/tailscale-enabler.conf ]; then
 		echo /mnt/tailscale-enabler.conf
 	else
@@ -22,21 +24,49 @@ RUNTIME_DIR=${TAILSCALE_RUNTIME_DIR:-/var/run/tailscale}
 SOCKET=${TAILSCALE_SOCKET:-$RUNTIME_DIR/tailscaled.sock}
 PIDFILE=${TAILSCALE_PIDFILE:-$RUNTIME_DIR/tailscaled.pid}
 LOGFILE=${TAILSCALE_LOGFILE:-$DIR/tailscaled.log}
-TUN=${TAILSCALE_TUN:-userspace-networking}
+TUN=${TAILSCALE_TUN:-tailscale0}
 PORT=${TAILSCALE_PORT:-41641}
-ENABLE_FORWARDING=${TAILSCALE_ENABLE_FORWARDING:-0}
+ENABLE_FORWARDING=${TAILSCALE_ENABLE_FORWARDING:-1}
+PROC_MISC=${TAILSCALE_PROC_MISC:-/proc/misc}
 
 ensure_dirs() {
 	mkdir -p "$DIR" "$STATE_DIR" "$RUNTIME_DIR"
 }
 
+tun_available() {
+	modprobe tun 2>/dev/null || insmod tun 2>/dev/null || true
+
+	if [ ! -e /dev/net/tun ]; then
+		mkdir -p /dev/net 2>/dev/null || true
+		mknod /dev/net/tun c 10 200 2>/dev/null || true
+		chmod 600 /dev/net/tun 2>/dev/null || true
+	fi
+
+	[ -c /dev/net/tun ] || return 1
+	grep -qw tun "$PROC_MISC" 2>/dev/null
+}
+
+fallback_to_userspace() {
+	echo "TUN device is unavailable; falling back to userspace-networking" >&2
+	echo "exit node and subnet routing are disabled on this device" >&2
+	TUN=userspace-networking
+
+	[ -f "$CONF" ] || return 0
+	if grep -q "^TAILSCALE_TUN=" "$CONF"; then
+		sed "s|^TAILSCALE_TUN=.*|TAILSCALE_TUN='userspace-networking'|" \
+			"$CONF" > "$CONF.tmp.$$" && mv "$CONF.tmp.$$" "$CONF"
+	else
+		echo "TAILSCALE_TUN='userspace-networking'" >> "$CONF"
+	fi
+	echo "updated $CONF; on Padavan run 'mtd_storage.sh save' to persist it" >&2
+}
+
 prepare_routing() {
 	[ "$TUN" = "userspace-networking" ] && return 0
 
-	if [ ! -e /dev/net/tun ]; then
-		mkdir -p /dev/net
-		mknod /dev/net/tun c 10 200 2>/dev/null || true
-		chmod 600 /dev/net/tun 2>/dev/null || true
+	if ! tun_available; then
+		fallback_to_userspace
+		return 0
 	fi
 
 	[ "$ENABLE_FORWARDING" = "1" ] || return 0
@@ -77,14 +107,31 @@ start() {
 		--port="$PORT" \
 		--no-logs-no-support \
 		>"$LOGFILE" 2>&1 &
-	echo $! > "$PIDFILE"
-	echo "tailscaled started (pid `cat "$PIDFILE"`)"
+	pid=$!
+	echo "$pid" > "$PIDFILE"
+
+	sleep 2
+	if ! kill -0 "$pid" 2>/dev/null; then
+		echo "tailscaled exited right after start; last log lines:" >&2
+		tail -n 20 "$LOGFILE" >&2 2>/dev/null
+		rm -f "$PIDFILE"
+		return 1
+	fi
+	echo "tailscaled started (pid $pid)"
 }
 
 stop() {
 	if is_running; then
-		kill `cat "$PIDFILE"` 2>/dev/null || true
-		sleep 1
+		pid=`cat "$PIDFILE"`
+		kill "$pid" 2>/dev/null || true
+		waited=0
+		while [ "$waited" -lt 10 ] && kill -0 "$pid" 2>/dev/null; do
+			sleep 1
+			waited=$((waited + 1))
+		done
+		if kill -0 "$pid" 2>/dev/null; then
+			kill -9 "$pid" 2>/dev/null || true
+		fi
 	fi
 	rm -f "$PIDFILE" "$SOCKET"
 	echo "tailscaled stopped"

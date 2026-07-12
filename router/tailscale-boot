@@ -5,6 +5,8 @@ find_conf() {
 		echo "$TAILSCALE_ENABLER_CONF"
 	elif [ -f /etc/tailscale-enabler.conf ]; then
 		echo /etc/tailscale-enabler.conf
+	elif [ -f /etc/storage/tailscale-enabler.conf ]; then
+		echo /etc/storage/tailscale-enabler.conf
 	elif [ -f /mnt/tailscale-enabler.conf ]; then
 		echo /mnt/tailscale-enabler.conf
 	else
