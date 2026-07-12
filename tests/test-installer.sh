@@ -64,6 +64,23 @@ cp "$TEST_PAYLOAD/${URL##*/}" "$OUTPUT"
 EOF
 chmod 755 "$WORK/bin/wget"
 
+# Mimics BusyBox wget without CA certificates: plain fetches fail the
+# certificate check; only --no-check-certificate succeeds.
+mkdir -p "$WORK/bin-strict"
+cat > "$WORK/bin-strict/wget" <<'EOF'
+#!/bin/sh
+if [ "$1" != "--no-check-certificate" ]; then
+	echo "wget: TLS certificate verification failed" >&2
+	exit 1
+fi
+shift
+[ "$1" = "-O" ] || exit 2
+OUTPUT=$2
+URL=$3
+cp "$TEST_PAYLOAD/${URL##*/}" "$OUTPUT"
+EOF
+chmod 755 "$WORK/bin-strict/wget"
+
 sed \
 	-e 's|__DEFAULT_BASE_URL__|http://test.invalid/files|g' \
 	-e 's|__INSTALLER_FILE__|install-http.sh|g' \
@@ -79,7 +96,7 @@ run_install() {
 	[ "$PACK" = "upx" ] && SUFFIX=-upx
 	mkdir -p "$CASE_DIR/runtime" "$CASE_DIR/state" "$CASE_DIR/run"
 
-	PATH="$WORK/bin:$PATH" \
+	PATH="${WGET_BIN:-$WORK/bin}:$PATH" \
 	TEST_PAYLOAD="$WORK/payload" \
 	TAILSCALE_DIR="$CASE_DIR/runtime" \
 	TAILSCALE_STATE_DIR="$CASE_DIR/state" \
@@ -120,6 +137,11 @@ run_install arm5 plain tailscaled-linux-armv5
 run_install armv5 upx tailscaled-linux-armv5 arm5
 run_install arm7 upx tailscaled-linux-armv7
 run_install armv7 plain tailscaled-linux-armv7 arm7
+
+# wget without CA certificates must fall back to --no-check-certificate
+WGET_BIN="$WORK/bin-strict"
+run_install mips upx tailscaled-linux-mips-softfloat
+WGET_BIN=
 
 if sh "$WORK/install-http.sh" mips64 upx http://test.invalid/files 2>/dev/null; then
 	echo "mips64 upx should be rejected" >&2

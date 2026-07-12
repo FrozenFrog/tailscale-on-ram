@@ -87,6 +87,12 @@ wget -O /tmp/install-tailscale.sh https://github.com/FrozenFrog/openwrt-tailscal
 sh /tmp/install-tailscale.sh arm7 upx
 ```
 
+Một số BusyBox `wget` bắt tay được TLS nhưng không có sẵn chứng chỉ CA nên
+báo lỗi xác minh chứng chỉ. Với lệnh tải tay đầu tiên ở trên, thêm
+`--no-check-certificate` ngay sau `wget`; các bước tải về sau (installer và
+boot script) tự thử lại với cờ này khi cần — file tải về vẫn được kiểm tra
+bằng SHA-256.
+
 `install-https.sh` trong release được khóa vào chính tag đó. Có thể chỉ định
 release URL khác bằng tham số thứ ba:
 

@@ -28,12 +28,19 @@ TMP_INSTALLER="$DIR/$INSTALLER"
 RETRIES=${TAILSCALE_DOWNLOAD_RETRIES:-20}
 RETRY_DELAY=${TAILSCALE_DOWNLOAD_RETRY_DELAY:-15}
 
+# Some BusyBox wget builds speak TLS but ship no CA certificates; retry
+# without verification before counting the attempt as failed.
+fetch_url() {
+	wget -O "$1" "$2" && return 0
+	wget --no-check-certificate -O "$1" "$2"
+}
+
 mkdir -p "$DIR"
 ATTEMPT=1
 while :; do
 	rm -f "$TMP_INSTALLER"
 	echo "downloading $BASE_URL/$INSTALLER (attempt $ATTEMPT)"
-	if wget -O "$TMP_INSTALLER" "$BASE_URL/$INSTALLER"; then
+	if fetch_url "$TMP_INSTALLER" "$BASE_URL/$INSTALLER"; then
 		break
 	fi
 	if [ "$RETRIES" -gt 0 ] && [ "$ATTEMPT" -ge "$RETRIES" ]; then

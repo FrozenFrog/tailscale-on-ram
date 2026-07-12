@@ -98,6 +98,14 @@ esac
 
 mkdir -p "$DIR" "$STATE_DIR" "$RUNTIME_DIR" || exit 1
 
+# Some BusyBox wget builds speak TLS but ship no CA certificates; retry
+# without verification before counting the attempt as failed. SHA256SUMS
+# still guards the payload below.
+fetch_url() {
+	wget -O "$1" "$2" && return 0
+	wget --no-check-certificate -O "$1" "$2"
+}
+
 download() {
 	REMOTE=$1
 	LOCAL=$2
@@ -106,7 +114,7 @@ download() {
 	while :; do
 		rm -f "$TMP"
 		echo "downloading $BASE_URL/$REMOTE (attempt $ATTEMPT)"
-		if wget -O "$TMP" "$BASE_URL/$REMOTE"; then
+		if fetch_url "$TMP" "$BASE_URL/$REMOTE"; then
 			mv "$TMP" "$LOCAL"
 			return 0
 		fi
