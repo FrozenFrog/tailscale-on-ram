@@ -106,6 +106,17 @@ fetch_url() {
 	wget --no-check-certificate -O "$1" "$2"
 }
 
+# Some firmwares ship BusyBox without the mv applet; fall back to copy and
+# delete. Only freshly downloaded files are moved, so the lost atomicity is
+# acceptable.
+mv_file() {
+	if command -v mv >/dev/null 2>&1; then
+		mv "$1" "$2"
+	else
+		cat "$1" > "$2" && rm -f "$1"
+	fi
+}
+
 download() {
 	REMOTE=$1
 	LOCAL=$2
@@ -115,7 +126,7 @@ download() {
 		rm -f "$TMP"
 		echo "downloading $BASE_URL/$REMOTE (attempt $ATTEMPT)"
 		if fetch_url "$TMP" "$BASE_URL/$REMOTE"; then
-			mv "$TMP" "$LOCAL"
+			mv_file "$TMP" "$LOCAL"
 			return 0
 		fi
 
@@ -127,6 +138,65 @@ download() {
 		sleep "$DOWNLOAD_RETRY_DELAY"
 	done
 }
+
+# BusyBox 1.13-era firmwares miss applets the scripts need (mv, mknod,
+# sha256sum). Fetch a newer static BusyBox from the same base URL before
+# anything else runs (busybox.net itself is HTTPS-only, out of reach of
+# those old wgets) and prepend its applets to PATH. The wget applet is
+# removed so the firmware's own wget keeps handling downloads.
+busybox_binary() {
+	case "$ARCH" in
+		mipsle) echo busybox-mipsel ;;
+		mips|mips64) echo "busybox-$ARCH" ;;
+		armv5|armv7) echo "busybox-${ARCH}l" ;;
+		*) echo "" ;;
+	esac
+}
+
+have_applets() {
+	command -v mv >/dev/null 2>&1 && \
+		command -v mknod >/dev/null 2>&1 && \
+		command -v sha256sum >/dev/null 2>&1
+}
+
+ensure_busybox() {
+	if [ -d "$DIR/bb" ]; then
+		PATH="$DIR/bb:$PATH"
+		export PATH
+	fi
+	if [ "${TAILSCALE_NEED_BUSYBOX:-0}" != "1" ] && have_applets; then
+		return 0
+	fi
+	BB=`busybox_binary`
+	if [ -z "$BB" ]; then
+		echo "no static BusyBox build for $ARCH; continuing with the firmware one" >&2
+		return 0
+	fi
+	if [ ! -x "$DIR/busybox" ]; then
+		if ! download "$BB" "$DIR/busybox"; then
+			echo "BusyBox download failed; continuing with the firmware one" >&2
+			return 0
+		fi
+		chmod 755 "$DIR/busybox"
+	fi
+	if ! "$DIR/busybox" true 2>/dev/null; then
+		echo "downloaded BusyBox does not run on this device; removing it" >&2
+		rm -f "$DIR/busybox"
+		return 0
+	fi
+	mkdir -p "$DIR/bb"
+	if ! "$DIR/busybox" --install -s "$DIR/bb" 2>/dev/null; then
+		for applet in `"$DIR/busybox" --list 2>/dev/null`; do
+			ln -s "$DIR/busybox" "$DIR/bb/$applet" 2>/dev/null
+		done
+	fi
+	rm -f "$DIR/bb/wget"
+	PATH="$DIR/bb:$PATH"
+	export PATH
+	echo "using BusyBox applets from $DIR/bb"
+}
+
+ensure_busybox
 
 download "$BINARY" "$DIR/$BINARY" || exit 1
 
@@ -157,9 +227,11 @@ download tailscale "$DIR/tailscale" || exit 1
 download tailscale-init "$DIR/tailscale-init" || exit 1
 download tailscale-boot "$BOOT_SCRIPT" || exit 1
 chmod 755 "$DIR/tailscale" "$DIR/tailscale-init" "$BOOT_SCRIPT"
-mv "$DIR/$BINARY" "$DIR/tailscaled"
+mv_file "$DIR/$BINARY" "$DIR/tailscaled"
 
-mkdir -p `dirname "$CONF"`
+case "$CONF" in
+	*/*) mkdir -p "${CONF%/*}" ;;
+esac
 cat > "$CONF" <<EOF
 TAILSCALE_PROFILE='$PROFILE'
 TAILSCALE_PACK='$PACK'

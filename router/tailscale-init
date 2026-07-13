@@ -29,6 +29,21 @@ PORT=${TAILSCALE_PORT:-41641}
 ENABLE_FORWARDING=${TAILSCALE_ENABLE_FORWARDING:-1}
 PROC_MISC=${TAILSCALE_PROC_MISC:-/proc/misc}
 
+# Applets from the BusyBox the installer downloads for 1.13-era firmwares
+# that miss mv or mknod.
+if [ -d "$DIR/bb" ]; then
+	PATH="$DIR/bb:$PATH"
+	export PATH
+fi
+
+mv_file() {
+	if command -v mv >/dev/null 2>&1; then
+		mv "$1" "$2"
+	else
+		cat "$1" > "$2" && rm -f "$1"
+	fi
+}
+
 ensure_dirs() {
 	mkdir -p "$DIR" "$STATE_DIR" "$RUNTIME_DIR"
 }
@@ -54,7 +69,7 @@ fallback_to_userspace() {
 	[ -f "$CONF" ] || return 0
 	if grep -q "^TAILSCALE_TUN=" "$CONF"; then
 		sed "s|^TAILSCALE_TUN=.*|TAILSCALE_TUN='userspace-networking'|" \
-			"$CONF" > "$CONF.tmp.$$" && mv "$CONF.tmp.$$" "$CONF"
+			"$CONF" > "$CONF.tmp.$$" && mv_file "$CONF.tmp.$$" "$CONF"
 	else
 		echo "TAILSCALE_TUN='userspace-networking'" >> "$CONF"
 	fi

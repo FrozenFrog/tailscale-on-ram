@@ -416,6 +416,27 @@ jobs:
             sh -n "$script"
           done
 
+          # Static BusyBox 1.21.1 for firmwares whose 1.13-era BusyBox lacks
+          # applets the scripts need (mv, mknod, sha256sum). busybox.net is
+          # HTTPS-only, unreachable for those old wgets, so the binaries ride
+          # along in the payload and any plain-HTTP mirror.
+          (
+            cd dist-release
+            for bb in busybox-mips busybox-mipsel busybox-mips64 \
+              busybox-armv5l busybox-armv7l; do
+              curl -fsSL --retry 5 -o "$bb" \
+                "https://busybox.net/downloads/binaries/1.21.1/$bb"
+            done
+            printf '%s\n' \
+              '6f45935bba1cffe43a4569dce556e74add4b88bd3cdc36520b2c4a2880e0f500  busybox-mips' \
+              'f129c42580aa1e264db2dc02fd02bdb7d852bcbd043871c376c0ef478ea70ed4  busybox-mipsel' \
+              '73f409134794cfa50fb8333b84e3922fb55c6e9f1842a340094811d6c1c3e565  busybox-mips64' \
+              '514d3d76e49b9e1ef65fb1a3b3ab838925f026632329a057e2e369a99ca67c78  busybox-armv5l' \
+              '8fceda57d83418bb288de0aef3c6df5e9421344ed0515c90fa5206f15c50f7e4  busybox-armv7l' \
+              | sha256sum -c
+            chmod 755 busybox-*
+          )
+
           cd dist-release
           find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' \
             | sort | xargs sha256sum > SHA256SUMS

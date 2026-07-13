@@ -55,6 +55,14 @@ done
 	ls tailscaled-linux-* | sort | xargs sha256sum > SHA256SUMS
 )
 
+# Stand-in for the static BusyBox the installer fetches on old firmwares;
+# answers `busybox true` and `busybox --install` with success.
+cat > "$WORK/payload/busybox-mipsel" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+chmod 755 "$WORK/payload/busybox-mipsel"
+
 cat > "$WORK/bin/wget" <<'EOF'
 #!/bin/sh
 [ "$1" = "-O" ] || exit 2
@@ -105,6 +113,7 @@ run_install() {
 	TAILSCALE_ENABLER_CONF="$CASE_DIR/enabler.conf" \
 	TAILSCALE_AUTO_START=0 \
 	TAILSCALE_INSTALL_OPENWRT_INIT=0 \
+	TAILSCALE_NEED_BUSYBOX="${NEED_BUSYBOX:-0}" \
 	sh "$WORK/install-http.sh" "$PROFILE" "$PACK" http://test.invalid/files
 
 	test -x "$CASE_DIR/runtime/tailscaled"
@@ -142,6 +151,15 @@ run_install armv7 plain tailscaled-linux-armv7 arm7
 WGET_BIN="$WORK/bin-strict"
 run_install mips upx tailscaled-linux-mips-softfloat
 WGET_BIN=
+
+# 1.13-era firmware BusyBox: installer must fetch a static BusyBox first
+# and expose its applet directory
+NEED_BUSYBOX=1
+run_install mipsle upx tailscaled-linux-mipsle-softfloat
+NEED_BUSYBOX=
+test -x "$WORK/mipsle-upx/runtime/busybox"
+test -d "$WORK/mipsle-upx/runtime/bb"
+cmp "$WORK/mipsle-upx/runtime/busybox" "$WORK/payload/busybox-mipsel"
 
 if sh "$WORK/install-http.sh" mips64 upx http://test.invalid/files 2>/dev/null; then
 	echo "mips64 upx should be rejected" >&2

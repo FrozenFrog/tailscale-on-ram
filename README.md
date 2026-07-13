@@ -139,6 +139,24 @@ sh /tmp/install-tailscale.sh arm7 upx $SERVER
 Không bắt buộc dùng IP trên. Có thể dùng IP, hostname và thư mục bất kỳ miễn
 là tất cả file release nằm chung một base URL.
 
+## Firmware có BusyBox quá cũ (thiếu mv, mknod, sha256sum)
+
+BusyBox đời 1.13 trên một số firmware thiếu các applet mà script cần
+(`mv`, `mknod`, `dirname`, `sha256sum`). Installer tự phát hiện điều này:
+nó tải BusyBox 1.21.1 tĩnh (`busybox-mips`, `busybox-mipsel`,
+`busybox-mips64`, `busybox-armv5l`, `busybox-armv7l` — có sẵn trong payload
+release và bản mirror) từ chính base URL **trước mọi bước khác**, lưu vào
+`$TAILSCALE_DIR/busybox`, cài các applet vào `$TAILSCALE_DIR/bb` và thêm
+thư mục đó vào PATH. `wget` của firmware vẫn được giữ nguyên để tải file
+(wget của BusyBox 1.21.1 không hỗ trợ TLS).
+
+Lưu ý: busybox.net hiện chỉ phục vụ HTTPS nên các thiết bị này không tải
+trực tiếp từ đó được — hãy dùng mirror HTTP (Cách 2); wget đời đó thường
+cũng không tải được từ GitHub. `$TAILSCALE_DIR` nằm trên RAM nên BusyBox
+được tải lại tự động sau mỗi lần reboot, trước khi tailscaled khởi động.
+Muốn ép dùng BusyBox tải về dù firmware có đủ applet, đặt
+`TAILSCALE_NEED_BUSYBOX=1` khi chạy installer.
+
 ## Chỉ định vùng lưu cấu hình
 
 Trên router flash nhỏ, không ghi binary lớn vào flash. Chỉ ghi state và script

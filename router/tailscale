@@ -17,7 +17,12 @@ find_conf() {
 CONF=`find_conf`
 [ -f "$CONF" ] && . "$CONF"
 
-DIR=${TAILSCALE_DIR:-`dirname "$0"`}
+# Very old BusyBox builds lack the dirname applet.
+case "$0" in
+	*/*) SELF_DIR=${0%/*} ;;
+	*) SELF_DIR=. ;;
+esac
+DIR=${TAILSCALE_DIR:-$SELF_DIR}
 RUNTIME_DIR=${TAILSCALE_RUNTIME_DIR:-/var/run/tailscale}
 SOCKET=${TAILSCALE_SOCKET:-$RUNTIME_DIR/tailscaled.sock}
 
