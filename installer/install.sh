@@ -5,14 +5,14 @@ DEFAULT_BASE_URL="__DEFAULT_BASE_URL__"
 DEFAULT_INSTALLER_FILE="__INSTALLER_FILE__"
 
 usage() {
-	echo "usage: sh $0 {mips|mips-hardfloat|mipsle|mipsle-hardfloat|mips64|mips64-hardfloat|mips64le|mips64le-hardfloat|arm5|arm7} [plain|upx] [base-url]" >&2
+	echo "usage: sh $0 {mips|mips-hardfloat|mipsle|mipsle-hardfloat|mips64|mips64-hardfloat|mips64le|mips64le-hardfloat|arm5|arm7} [plain|upx] [\"base-url [base-url-2 ...]\"]" >&2
 	exit 2
 }
 
 PROFILE_INPUT=${1:-${TAILSCALE_PROFILE:-}}
 PACK_INPUT=${2:-${TAILSCALE_PACK:-}}
 BASE_INPUT=${3:-}
-BASE_ENV=${TAILSCALE_BASE_URL:-}
+BASE_ENV=${TAILSCALE_BASE_URLS:-${TAILSCALE_BASE_URL:-}}
 
 case "$PROFILE_INPUT" in
 	mips|mips-softfloat|mips-hardfloat|mipsle|mipsle-softfloat|mipsle-hardfloat|mips64|mips64-softfloat|mips64-hardfloat|mips64le|mips64le-softfloat|mips64le-hardfloat)
@@ -54,8 +54,7 @@ CONF=${TAILSCALE_ENABLER_CONF:-$DEFAULT_CONF}
 
 # Command-line values override an existing configuration file.
 PACK=${PACK_INPUT:-${TAILSCALE_PACK:-plain}}
-BASE_URL=${BASE_INPUT:-${BASE_ENV:-$DEFAULT_BASE_URL}}
-BASE_URL=${BASE_URL%/}
+BASE_LIST=${BASE_INPUT:-${BASE_ENV:-$DEFAULT_BASE_URL}}
 DIR=${TAILSCALE_DIR:-$DEFAULT_DIR}
 STATE_DIR=${TAILSCALE_STATE_DIR:-$DEFAULT_STATE_DIR}
 RUNTIME_DIR=${TAILSCALE_RUNTIME_DIR:-/var/run/tailscale}
@@ -81,15 +80,28 @@ case "$PACK:$ARCH" in
 		;;
 esac
 
-case "$BASE_URL" in
-	http://*|https://*) ;;
-	*)
-		echo "base-url must start with http:// or https://" >&2
-		exit 2
-		;;
-esac
+# base-url may be a space-separated list of mirrors, tried in order;
+# whichever one answers is promoted to the front for later downloads.
+BASE_URLS=
+for B in $BASE_LIST; do
+	B=${B%/}
+	case "$B" in
+		http://*|https://*) ;;
+		*)
+			echo "base-url must start with http:// or https://: $B" >&2
+			exit 2
+			;;
+	esac
+	BASE_URLS="$BASE_URLS $B"
+done
+BASE_URLS=${BASE_URLS# }
+if [ -z "$BASE_URLS" ]; then
+	echo "base-url must start with http:// or https://" >&2
+	exit 2
+fi
+BASE_URL=${BASE_URLS%% *}
 
-case "$BASE_URL$DIR$STATE_DIR$RUNTIME_DIR$BOOT_SCRIPT$CONF" in
+case "$BASE_URLS$DIR$STATE_DIR$RUNTIME_DIR$BOOT_SCRIPT$CONF" in
 	*"'"*)
 		echo "single quotes are not supported in paths or base-url" >&2
 		exit 2
@@ -98,12 +110,27 @@ esac
 
 mkdir -p "$DIR" "$STATE_DIR" "$RUNTIME_DIR" || exit 1
 
+# Fail fast with a clear message instead of looping through silent retries
+# when the firmware ships no downloader at all.
+if ! command -v wget >/dev/null 2>&1 && ! command -v curl >/dev/null 2>&1; then
+	echo "neither wget nor curl is available; cannot download anything" >&2
+	exit 1
+fi
+
 # Some BusyBox wget builds speak TLS but ship no CA certificates; retry
 # without verification before counting the attempt as failed. SHA256SUMS
-# still guards the payload below.
+# still guards the payload below. Some firmwares ship curl instead of
+# wget; fall back to it with the same no-verification retry.
 fetch_url() {
-	wget -O "$1" "$2" && return 0
-	wget --no-check-certificate -O "$1" "$2"
+	if command -v wget >/dev/null 2>&1; then
+		wget -O "$1" "$2" && return 0
+		wget --no-check-certificate -O "$1" "$2" && return 0
+	fi
+	if command -v curl >/dev/null 2>&1; then
+		curl -f -L -o "$1" "$2" && return 0
+		curl -f -L -k -o "$1" "$2" && return 0
+	fi
+	return 1
 }
 
 # Some firmwares ship BusyBox without the mv applet; fall back to copy and
@@ -117,18 +144,32 @@ mv_file() {
 	fi
 }
 
+# Move the mirror that answered to the front of the list so later
+# downloads (and the configuration written at the end) try it first.
+promote_base() {
+	REST=
+	for B in $BASE_URLS; do
+		[ "$B" = "$1" ] || REST="$REST $B"
+	done
+	BASE_URLS="$1$REST"
+	BASE_URL=$1
+}
+
 download() {
 	REMOTE=$1
 	LOCAL=$2
 	TMP="$LOCAL.download.$$"
 	ATTEMPT=1
 	while :; do
-		rm -f "$TMP"
-		echo "downloading $BASE_URL/$REMOTE (attempt $ATTEMPT)"
-		if fetch_url "$TMP" "$BASE_URL/$REMOTE"; then
-			mv_file "$TMP" "$LOCAL"
-			return 0
-		fi
+		for BASE in $BASE_URLS; do
+			rm -f "$TMP"
+			echo "downloading $BASE/$REMOTE (attempt $ATTEMPT)"
+			if fetch_url "$TMP" "$BASE/$REMOTE"; then
+				[ "$BASE" = "$BASE_URL" ] || promote_base "$BASE"
+				mv_file "$TMP" "$LOCAL"
+				return 0
+			fi
+		done
 
 		rm -f "$TMP"
 		if [ "$DOWNLOAD_RETRIES" -gt 0 ] && [ "$ATTEMPT" -ge "$DOWNLOAD_RETRIES" ]; then
@@ -142,8 +183,10 @@ download() {
 # BusyBox 1.13-era firmwares miss applets the scripts need (mv, mknod,
 # sha256sum). Fetch a newer static BusyBox from the same base URL before
 # anything else runs (busybox.net itself is HTTPS-only, out of reach of
-# those old wgets) and prepend its applets to PATH. The wget applet is
-# removed so the firmware's own wget keeps handling downloads.
+# those old wgets) and prepend its applets to PATH. When the firmware has
+# its own wget, the wget applet is removed so the firmware one (possibly
+# TLS-capable) keeps handling downloads; on wget-less firmwares it is kept
+# as a plain-HTTP downloader.
 busybox_binary() {
 	case "$ARCH" in
 		mipsle) echo busybox-mipsel ;;
@@ -160,6 +203,13 @@ have_applets() {
 }
 
 ensure_busybox() {
+	# Checked before $DIR/bb enters PATH, so a wget applet left over from a
+	# previous run is not mistaken for a firmware wget.
+	if command -v wget >/dev/null 2>&1; then
+		FW_WGET=1
+	else
+		FW_WGET=0
+	fi
 	if [ -d "$DIR/bb" ]; then
 		PATH="$DIR/bb:$PATH"
 		export PATH
@@ -190,7 +240,11 @@ ensure_busybox() {
 			ln -s "$DIR/busybox" "$DIR/bb/$applet" 2>/dev/null
 		done
 	fi
-	rm -f "$DIR/bb/wget"
+	if [ "$FW_WGET" = 1 ]; then
+		rm -f "$DIR/bb/wget"
+	else
+		echo "no firmware wget; keeping the BusyBox wget applet"
+	fi
 	PATH="$DIR/bb:$PATH"
 	export PATH
 	echo "using BusyBox applets from $DIR/bb"
@@ -236,6 +290,7 @@ cat > "$CONF" <<EOF
 TAILSCALE_PROFILE='$PROFILE'
 TAILSCALE_PACK='$PACK'
 TAILSCALE_BASE_URL='$BASE_URL'
+TAILSCALE_BASE_URLS='$BASE_URLS'
 TAILSCALE_INSTALLER_FILE='$INSTALLER_FILE'
 TAILSCALE_DIR='$DIR'
 TAILSCALE_STATE_DIR='$STATE_DIR'

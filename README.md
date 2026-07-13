@@ -139,6 +139,39 @@ sh /tmp/install-tailscale.sh arm7 upx $SERVER
 Không bắt buộc dùng IP trên. Có thể dùng IP, hostname và thư mục bất kỳ miễn
 là tất cả file release nằm chung một base URL.
 
+### Mirror dự phòng (nhiều base URL)
+
+Tham số base-url (hoặc biến `TAILSCALE_BASE_URLS`) nhận **nhiều URL cách
+nhau bằng dấu cách**, thử lần lượt theo thứ tự. URL nào trả lời được sẽ
+được ưu tiên cho các lần tải tiếp theo và được ghi lên đầu danh sách trong
+file cấu hình — nhờ đó sau reboot, mirror chính chết thì router tự chuyển
+sang mirror dự phòng:
+
+```sh
+sh /tmp/install-tailscale.sh mipsle upx "http://95.111.195.145/openwrt-tailscale-enabler http://mirror2.example.com/tailscale"
+```
+
+Router có wget/curl hỗ trợ TLS có thể thêm URL release GitHub vào cuối
+danh sách làm dự phòng sau cùng. Router chỉ tải được HTTP thuần thì mọi
+URL trong danh sách phải là mirror HTTP.
+
+### Router chỉ có curl (không có wget)
+
+Một số firmware tùy biến chỉ có `curl` (thường cũng chỉ tải được HTTP thuần).
+Installer và boot script tự nhận ra điều này: mỗi lần tải sẽ thử `wget`
+trước rồi tự chuyển sang `curl` (`-f -L`, kèm lần thử lại `-k` khi HTTPS
+thiếu chứng chỉ). Chỉ khác lệnh tải file đầu vào:
+
+```sh
+SERVER=http://95.111.195.145/openwrt-tailscale-enabler
+curl -f -o /tmp/install-tailscale.sh $SERVER/install-http.sh
+sh /tmp/install-tailscale.sh mipsle plain $SERVER
+```
+
+Không cần (và không nên) đặt `alias wget=...` — alias chỉ có tác dụng trong
+shell tương tác, không được truyền vào tiến trình `sh` chạy script nên
+installer sẽ không thấy nó.
+
 ## Firmware có BusyBox quá cũ (thiếu mv, mknod, sha256sum)
 
 BusyBox đời 1.13 trên một số firmware thiếu các applet mà script cần
@@ -147,8 +180,10 @@ nó tải BusyBox 1.21.1 tĩnh (`busybox-mips`, `busybox-mipsel`,
 `busybox-mips64`, `busybox-armv5l`, `busybox-armv7l` — có sẵn trong payload
 release và bản mirror) từ chính base URL **trước mọi bước khác**, lưu vào
 `$TAILSCALE_DIR/busybox`, cài các applet vào `$TAILSCALE_DIR/bb` và thêm
-thư mục đó vào PATH. `wget` của firmware vẫn được giữ nguyên để tải file
-(wget của BusyBox 1.21.1 không hỗ trợ TLS).
+thư mục đó vào PATH. Nếu firmware có `wget` riêng thì applet wget của
+BusyBox bị loại bỏ để wget firmware (có thể hỗ trợ TLS) tiếp tục tải file;
+nếu firmware không có wget (ví dụ chỉ có curl) thì applet wget được giữ lại
+làm downloader dự phòng — mirror là HTTP thuần nên không cần TLS.
 
 Lưu ý: busybox.net hiện chỉ phục vụ HTTPS nên các thiết bị này không tải
 trực tiếp từ đó được — hãy dùng mirror HTTP (Cách 2); wget đời đó thường

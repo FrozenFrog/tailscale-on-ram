@@ -22,27 +22,52 @@ fi
 . "$CONF"
 
 DIR=${TAILSCALE_DIR:-/tmp/tailscale}
-BASE_URL=${TAILSCALE_BASE_URL%/}
+# Space-separated list of mirrors, tried in order (TAILSCALE_BASE_URL is
+# the older single-mirror form).
+BASE_LIST=${TAILSCALE_BASE_URLS:-${TAILSCALE_BASE_URL:-}}
+BASE_URLS=
+for B in $BASE_LIST; do
+	BASE_URLS="$BASE_URLS ${B%/}"
+done
+BASE_URLS=${BASE_URLS# }
+if [ -z "$BASE_URLS" ]; then
+	echo "no base URL configured (TAILSCALE_BASE_URLS/TAILSCALE_BASE_URL)" >&2
+	exit 1
+fi
 INSTALLER=${TAILSCALE_INSTALLER_FILE:-install-http.sh}
 TMP_INSTALLER="$DIR/$INSTALLER"
 RETRIES=${TAILSCALE_DOWNLOAD_RETRIES:-20}
 RETRY_DELAY=${TAILSCALE_DOWNLOAD_RETRY_DELAY:-15}
 
 # Some BusyBox wget builds speak TLS but ship no CA certificates; retry
-# without verification before counting the attempt as failed.
+# without verification before counting the attempt as failed. Some
+# firmwares ship curl instead of wget; fall back to it the same way.
 fetch_url() {
-	wget -O "$1" "$2" && return 0
-	wget --no-check-certificate -O "$1" "$2"
+	if command -v wget >/dev/null 2>&1; then
+		wget -O "$1" "$2" && return 0
+		wget --no-check-certificate -O "$1" "$2" && return 0
+	fi
+	if command -v curl >/dev/null 2>&1; then
+		curl -f -L -o "$1" "$2" && return 0
+		curl -f -L -k -o "$1" "$2" && return 0
+	fi
+	return 1
 }
 
 mkdir -p "$DIR"
+if ! command -v wget >/dev/null 2>&1 && ! command -v curl >/dev/null 2>&1; then
+	echo "neither wget nor curl is available; cannot download anything" >&2
+	exit 1
+fi
 ATTEMPT=1
 while :; do
-	rm -f "$TMP_INSTALLER"
-	echo "downloading $BASE_URL/$INSTALLER (attempt $ATTEMPT)"
-	if fetch_url "$TMP_INSTALLER" "$BASE_URL/$INSTALLER"; then
-		break
-	fi
+	for BASE in $BASE_URLS; do
+		rm -f "$TMP_INSTALLER"
+		echo "downloading $BASE/$INSTALLER (attempt $ATTEMPT)"
+		if fetch_url "$TMP_INSTALLER" "$BASE/$INSTALLER"; then
+			break 2
+		fi
+	done
 	if [ "$RETRIES" -gt 0 ] && [ "$ATTEMPT" -ge "$RETRIES" ]; then
 		exit 1
 	fi
@@ -51,9 +76,15 @@ while :; do
 done
 chmod 755 "$TMP_INSTALLER"
 
+# Hand the whole list to the installer with the mirror that answered first.
+BASE_ORDERED=$BASE
+for B in $BASE_URLS; do
+	[ "$B" = "$BASE" ] || BASE_ORDERED="$BASE_ORDERED $B"
+done
+
 TAILSCALE_ENABLER_CONF="$CONF" \
 	TAILSCALE_AUTO_START=1 \
 	exec sh "$TMP_INSTALLER" \
 		"$TAILSCALE_PROFILE" \
 		"${TAILSCALE_PACK:-plain}" \
-		"$BASE_URL"
+		"$BASE_ORDERED"

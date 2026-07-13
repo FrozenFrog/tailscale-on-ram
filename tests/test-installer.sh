@@ -56,9 +56,14 @@ done
 )
 
 # Stand-in for the static BusyBox the installer fetches on old firmwares;
-# answers `busybox true` and `busybox --install` with success.
+# answers `busybox true` with success and `busybox --install -s <dir>` by
+# dropping a wget applet stub so the keep/remove logic can be tested.
 cat > "$WORK/payload/busybox-mipsel" <<'EOF'
 #!/bin/sh
+if [ "${1:-}" = "--install" ]; then
+	printf '#!/bin/sh\nexit 1\n' > "$3/wget"
+	chmod 755 "$3/wget"
+fi
 exit 0
 EOF
 chmod 755 "$WORK/payload/busybox-mipsel"
@@ -68,9 +73,44 @@ cat > "$WORK/bin/wget" <<'EOF'
 [ "$1" = "-O" ] || exit 2
 OUTPUT=$2
 URL=$3
+case "$URL" in
+	http://dead.invalid/*) exit 1 ;;
+esac
 cp "$TEST_PAYLOAD/${URL##*/}" "$OUTPUT"
 EOF
 chmod 755 "$WORK/bin/wget"
+
+# Mimics a firmware that ships curl instead of wget: the wget stub always
+# fails (a broken or absent wget) so fetch_url must fall through to curl.
+mkdir -p "$WORK/bin-curl"
+cat > "$WORK/bin-curl/curl" <<'EOF'
+#!/bin/sh
+OUTPUT=
+URL=
+while [ $# -gt 0 ]; do
+	case "$1" in
+		-o) OUTPUT=$2; shift 2 ;;
+		-f|-L|-k) shift ;;
+		*) URL=$1; shift ;;
+	esac
+done
+[ -n "$OUTPUT" ] || exit 2
+cp "$TEST_PAYLOAD/${URL##*/}" "$OUTPUT"
+EOF
+chmod 755 "$WORK/bin-curl/curl"
+cat > "$WORK/bin-curl/wget" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+chmod 755 "$WORK/bin-curl/wget"
+
+# Same firmware but without any wget in PATH at all (needs a minimal tool
+# dir so the host's real wget cannot leak in).
+mkdir -p "$WORK/bin-curl-pure" "$WORK/bin-min"
+cp "$WORK/bin-curl/curl" "$WORK/bin-curl-pure/curl"
+for tool in mkdir rm chmod grep cat mv ln cp sleep; do
+	ln -s "`command -v $tool`" "$WORK/bin-min/$tool"
+done
 
 # Mimics BusyBox wget without CA certificates: plain fetches fail the
 # certificate check; only --no-check-certificate succeeds.
@@ -114,7 +154,8 @@ run_install() {
 	TAILSCALE_AUTO_START=0 \
 	TAILSCALE_INSTALL_OPENWRT_INIT=0 \
 	TAILSCALE_NEED_BUSYBOX="${NEED_BUSYBOX:-0}" \
-	sh "$WORK/install-http.sh" "$PROFILE" "$PACK" http://test.invalid/files
+	sh "$WORK/install-http.sh" "$PROFILE" "$PACK" \
+		"${BASE_ARG:-http://test.invalid/files}"
 
 	test -x "$CASE_DIR/runtime/tailscaled"
 	test -x "$CASE_DIR/runtime/tailscale"
@@ -152,14 +193,68 @@ WGET_BIN="$WORK/bin-strict"
 run_install mips upx tailscaled-linux-mips-softfloat
 WGET_BIN=
 
+# firmware with a broken/failing wget must fall back to curl
+WGET_BIN="$WORK/bin-curl"
+run_install mips-softfloat plain tailscaled-linux-mips-softfloat
+WGET_BIN=
+
+# dead primary mirror: downloads must fall back to the next base URL and
+# the configuration must record the mirror that answered first
+BASE_ARG="http://dead.invalid/files http://test.invalid/files"
+run_install arm5 upx tailscaled-linux-armv5
+BASE_ARG=
+grep -q "TAILSCALE_BASE_URL='http://test.invalid/files'" \
+	"$WORK/arm5-upx/enabler.conf"
+grep -q "TAILSCALE_BASE_URLS='http://test.invalid/files http://dead.invalid/files'" \
+	"$WORK/arm5-upx/enabler.conf"
+
 # 1.13-era firmware BusyBox: installer must fetch a static BusyBox first
-# and expose its applet directory
+# and expose its applet directory; the wget applet is dropped because the
+# firmware has its own wget
 NEED_BUSYBOX=1
 run_install mipsle upx tailscaled-linux-mipsle-softfloat
 NEED_BUSYBOX=
 test -x "$WORK/mipsle-upx/runtime/busybox"
 test -d "$WORK/mipsle-upx/runtime/bb"
 cmp "$WORK/mipsle-upx/runtime/busybox" "$WORK/payload/busybox-mipsel"
+test ! -e "$WORK/mipsle-upx/runtime/bb/wget"
+
+# curl-only firmware (no wget anywhere in PATH): the BusyBox wget applet
+# must be kept as a fallback downloader
+CP="$WORK/curl-pure"
+mkdir -p "$CP/runtime" "$CP/state" "$CP/run"
+PATH="$WORK/bin-curl-pure:$WORK/bin-min" \
+	TEST_PAYLOAD="$WORK/payload" \
+	TAILSCALE_DIR="$CP/runtime" \
+	TAILSCALE_STATE_DIR="$CP/state" \
+	TAILSCALE_RUNTIME_DIR="$CP/run" \
+	TAILSCALE_BOOT_SCRIPT="$CP/start.sh" \
+	TAILSCALE_ENABLER_CONF="$CP/enabler.conf" \
+	TAILSCALE_AUTO_START=0 \
+	TAILSCALE_INSTALL_OPENWRT_INIT=0 \
+	TAILSCALE_NEED_BUSYBOX=1 \
+	TAILSCALE_DOWNLOAD_RETRIES=1 \
+	/bin/sh "$WORK/install-http.sh" mipsle upx http://test.invalid/files
+test -x "$CP/runtime/tailscaled"
+test -e "$CP/runtime/bb/wget"
+
+# no downloader at all: fail fast instead of retrying silently
+ND="$WORK/no-downloader"
+mkdir -p "$ND/runtime" "$ND/state" "$ND/run"
+if PATH="$WORK/bin-min" \
+	TAILSCALE_DIR="$ND/runtime" \
+	TAILSCALE_STATE_DIR="$ND/state" \
+	TAILSCALE_RUNTIME_DIR="$ND/run" \
+	TAILSCALE_BOOT_SCRIPT="$ND/start.sh" \
+	TAILSCALE_ENABLER_CONF="$ND/enabler.conf" \
+	TAILSCALE_AUTO_START=0 \
+	TAILSCALE_INSTALL_OPENWRT_INIT=0 \
+	/bin/sh "$WORK/install-http.sh" mipsle plain http://test.invalid/files \
+		2>"$ND/install.err"; then
+	echo "install should fail fast without wget and curl" >&2
+	exit 1
+fi
+grep -q "neither wget nor curl" "$ND/install.err"
 
 if sh "$WORK/install-http.sh" mips64 upx http://test.invalid/files 2>/dev/null; then
 	echo "mips64 upx should be rejected" >&2
