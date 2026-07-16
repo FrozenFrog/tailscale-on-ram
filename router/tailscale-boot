@@ -39,15 +39,31 @@ TMP_INSTALLER="$DIR/$INSTALLER"
 RETRIES=${TAILSCALE_DOWNLOAD_RETRIES:-20}
 RETRY_DELAY=${TAILSCALE_DOWNLOAD_RETRY_DELAY:-15}
 
+# Some ancient BusyBox ash builds (1.8-era and older) lack the `command`
+# builtin, so probing tools with it aborts the whole script there. Only
+# external tools are ever probed, so scanning PATH by hand is enough.
+have() {
+	_HAVE_IFS=$IFS
+	IFS=:
+	for _HAVE_DIR in $PATH; do
+		if [ -x "${_HAVE_DIR:-.}/$1" ]; then
+			IFS=$_HAVE_IFS
+			return 0
+		fi
+	done
+	IFS=$_HAVE_IFS
+	return 1
+}
+
 # Some BusyBox wget builds speak TLS but ship no CA certificates; retry
 # without verification before counting the attempt as failed. Some
 # firmwares ship curl instead of wget; fall back to it the same way.
 fetch_url() {
-	if command -v wget >/dev/null 2>&1; then
+	if have wget; then
 		wget -O "$1" "$2" && return 0
 		wget --no-check-certificate -O "$1" "$2" && return 0
 	fi
-	if command -v curl >/dev/null 2>&1; then
+	if have curl; then
 		curl -f -L -o "$1" "$2" && return 0
 		curl -f -L -k -o "$1" "$2" && return 0
 	fi
@@ -55,7 +71,7 @@ fetch_url() {
 }
 
 mkdir -p "$DIR"
-if ! command -v wget >/dev/null 2>&1 && ! command -v curl >/dev/null 2>&1; then
+if ! have wget && ! have curl; then
 	echo "neither wget nor curl is available; cannot download anything" >&2
 	exit 1
 fi
@@ -71,7 +87,10 @@ while :; do
 	if [ "$RETRIES" -gt 0 ] && [ "$ATTEMPT" -ge "$RETRIES" ]; then
 		exit 1
 	fi
-	ATTEMPT=$((ATTEMPT + 1))
+	# Ancient ash builds abort on arithmetic expansion; count with expr
+	# instead. Without the expr applet the counter degrades to retrying
+	# forever, same as TAILSCALE_DOWNLOAD_RETRIES=0.
+	ATTEMPT=`expr "$ATTEMPT" + 1 2>/dev/null` || ATTEMPT=0
 	sleep "$RETRY_DELAY"
 done
 chmod 755 "$TMP_INSTALLER"

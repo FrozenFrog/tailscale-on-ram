@@ -20,7 +20,9 @@ CONF=`find_conf`
 DIR=${TAILSCALE_DIR:-/tmp/tailscale}
 STATE_DIR=${TAILSCALE_STATE_DIR:-/overlay/tailscale-state}
 STATE_FILE=${TAILSCALE_STATE_FILE:-$STATE_DIR/tailscaled.state}
-RUNTIME_DIR=${TAILSCALE_RUNTIME_DIR:-/var/run/tailscale}
+# Socket and pidfile default under $DIR: guaranteed writable, RAM-backed
+# on these routers, and gone after reboot like runtime files must be.
+RUNTIME_DIR=${TAILSCALE_RUNTIME_DIR:-$DIR/run}
 SOCKET=${TAILSCALE_SOCKET:-$RUNTIME_DIR/tailscaled.sock}
 PIDFILE=${TAILSCALE_PIDFILE:-$RUNTIME_DIR/tailscaled.pid}
 LOGFILE=${TAILSCALE_LOGFILE:-$DIR/tailscaled.log}
@@ -36,8 +38,24 @@ if [ -d "$DIR/bb" ]; then
 	export PATH
 fi
 
+# Some ancient BusyBox ash builds (1.8-era and older) lack the `command`
+# builtin, so probing tools with it aborts the whole script there. Only
+# external tools are ever probed, so scanning PATH by hand is enough.
+have() {
+	_HAVE_IFS=$IFS
+	IFS=:
+	for _HAVE_DIR in $PATH; do
+		if [ -x "${_HAVE_DIR:-.}/$1" ]; then
+			IFS=$_HAVE_IFS
+			return 0
+		fi
+	done
+	IFS=$_HAVE_IFS
+	return 1
+}
+
 mv_file() {
-	if command -v mv >/dev/null 2>&1; then
+	if have mv; then
 		mv "$1" "$2"
 	else
 		cat "$1" > "$2" && rm -f "$1"
@@ -139,10 +157,12 @@ stop() {
 	if is_running; then
 		pid=`cat "$PIDFILE"`
 		kill "$pid" 2>/dev/null || true
-		waited=0
-		while [ "$waited" -lt 10 ] && kill -0 "$pid" 2>/dev/null; do
+		# Give it ten seconds, counted with a string so ash builds without
+		# arithmetic expansion or expr can run this too.
+		waited=
+		while [ "$waited" != ".........." ] && kill -0 "$pid" 2>/dev/null; do
 			sleep 1
-			waited=$((waited + 1))
+			waited="$waited."
 		done
 		if kill -0 "$pid" 2>/dev/null; then
 			kill -9 "$pid" 2>/dev/null || true

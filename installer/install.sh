@@ -57,7 +57,10 @@ PACK=${PACK_INPUT:-${TAILSCALE_PACK:-plain}}
 BASE_LIST=${BASE_INPUT:-${BASE_ENV:-$DEFAULT_BASE_URL}}
 DIR=${TAILSCALE_DIR:-$DEFAULT_DIR}
 STATE_DIR=${TAILSCALE_STATE_DIR:-$DEFAULT_STATE_DIR}
-RUNTIME_DIR=${TAILSCALE_RUNTIME_DIR:-/var/run/tailscale}
+# Socket and pidfile live under $DIR so the only writable-directory
+# assumption is the one the installer already enforces; /tmp is RAM on
+# these routers, so they still vanish on reboot as runtime files must.
+RUNTIME_DIR=${TAILSCALE_RUNTIME_DIR:-$DIR/run}
 BOOT_SCRIPT=${TAILSCALE_BOOT_SCRIPT:-$DEFAULT_BOOT}
 TUN=${TAILSCALE_TUN:-tailscale0}
 ENABLE_FORWARDING=${TAILSCALE_ENABLE_FORWARDING:-1}
@@ -110,9 +113,25 @@ esac
 
 mkdir -p "$DIR" "$STATE_DIR" "$RUNTIME_DIR" || exit 1
 
+# Some ancient BusyBox ash builds (1.8-era and older) lack the `command`
+# builtin, so probing tools with it aborts the whole script there. Only
+# external tools are ever probed, so scanning PATH by hand is enough.
+have() {
+	_HAVE_IFS=$IFS
+	IFS=:
+	for _HAVE_DIR in $PATH; do
+		if [ -x "${_HAVE_DIR:-.}/$1" ]; then
+			IFS=$_HAVE_IFS
+			return 0
+		fi
+	done
+	IFS=$_HAVE_IFS
+	return 1
+}
+
 # Fail fast with a clear message instead of looping through silent retries
 # when the firmware ships no downloader at all.
-if ! command -v wget >/dev/null 2>&1 && ! command -v curl >/dev/null 2>&1; then
+if ! have wget && ! have curl; then
 	echo "neither wget nor curl is available; cannot download anything" >&2
 	exit 1
 fi
@@ -122,11 +141,11 @@ fi
 # still guards the payload below. Some firmwares ship curl instead of
 # wget; fall back to it with the same no-verification retry.
 fetch_url() {
-	if command -v wget >/dev/null 2>&1; then
+	if have wget; then
 		wget -O "$1" "$2" && return 0
 		wget --no-check-certificate -O "$1" "$2" && return 0
 	fi
-	if command -v curl >/dev/null 2>&1; then
+	if have curl; then
 		curl -f -L -o "$1" "$2" && return 0
 		curl -f -L -k -o "$1" "$2" && return 0
 	fi
@@ -137,7 +156,7 @@ fetch_url() {
 # delete. Only freshly downloaded files are moved, so the lost atomicity is
 # acceptable.
 mv_file() {
-	if command -v mv >/dev/null 2>&1; then
+	if have mv; then
 		mv "$1" "$2"
 	else
 		cat "$1" > "$2" && rm -f "$1"
@@ -175,7 +194,10 @@ download() {
 		if [ "$DOWNLOAD_RETRIES" -gt 0 ] && [ "$ATTEMPT" -ge "$DOWNLOAD_RETRIES" ]; then
 			return 1
 		fi
-		ATTEMPT=$((ATTEMPT + 1))
+		# Ancient ash builds abort on arithmetic expansion; count with expr
+		# instead. Without the expr applet the counter degrades to retrying
+		# forever, same as DOWNLOAD_RETRIES=0.
+		ATTEMPT=`expr "$ATTEMPT" + 1 2>/dev/null` || ATTEMPT=0
 		sleep "$DOWNLOAD_RETRY_DELAY"
 	done
 }
@@ -197,15 +219,13 @@ busybox_binary() {
 }
 
 have_applets() {
-	command -v mv >/dev/null 2>&1 && \
-		command -v mknod >/dev/null 2>&1 && \
-		command -v sha256sum >/dev/null 2>&1
+	have mv && have mknod && have sha256sum
 }
 
 ensure_busybox() {
 	# Checked before $DIR/bb enters PATH, so a wget applet left over from a
 	# previous run is not mistaken for a firmware wget.
-	if command -v wget >/dev/null 2>&1; then
+	if have wget; then
 		FW_WGET=1
 	else
 		FW_WGET=0
@@ -254,7 +274,7 @@ ensure_busybox
 
 download "$BINARY" "$DIR/$BINARY" || exit 1
 
-if command -v sha256sum >/dev/null 2>&1; then
+if have sha256sum; then
 	download SHA256SUMS "$DIR/SHA256SUMS" || exit 1
 	if ! grep "  $BINARY\$" "$DIR/SHA256SUMS" > "$DIR/$BINARY.sha256"; then
 		echo "SHA-256 checksum for $BINARY is missing" >&2

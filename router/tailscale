@@ -23,7 +23,8 @@ case "$0" in
 	*) SELF_DIR=. ;;
 esac
 DIR=${TAILSCALE_DIR:-$SELF_DIR}
-RUNTIME_DIR=${TAILSCALE_RUNTIME_DIR:-/var/run/tailscale}
+# Must match tailscale-init's default so the CLI finds the socket.
+RUNTIME_DIR=${TAILSCALE_RUNTIME_DIR:-$DIR/run}
 SOCKET=${TAILSCALE_SOCKET:-$RUNTIME_DIR/tailscaled.sock}
 
 if [ ! -x "$DIR/tailscaled" ]; then

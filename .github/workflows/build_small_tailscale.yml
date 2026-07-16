@@ -219,7 +219,7 @@ jobs:
           version_short="$(tr -d '\r\n' < VERSION.txt)"
           version_hash="$(git rev-parse --short HEAD)"
           version_long="${version_short}-enabler-${version_hash}"
-          features="cli,ssh,advertiseexitnode,advertiseroutes,osrouter,iptables,bakedroots,cachenetmap,portmapper,listenrawdisco,unixsocketidentity,ipnbus,tailnetlock"
+          features="cli,ssh,advertiseexitnode,advertiseroutes,osrouter,iptables,bakedroots,cachenetmap,portmapper,listenrawdisco,unixsocketidentity,ipnbus,tailnetlock,serve"
           tags="$(env -u GOOS -u GOARCH -u GOARM -u GOMIPS -u GOMIPS64 go run ./cmd/featuretags --min --add="$features")"
           printf '%s\n' "$tags" > "../dist/build-tags-${{ matrix.target }}.txt"
 

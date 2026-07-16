@@ -129,6 +129,18 @@ cp "$TEST_PAYLOAD/${URL##*/}" "$OUTPUT"
 EOF
 chmod 755 "$WORK/bin-strict/wget"
 
+# Ancient BusyBox ash builds (1.8-era and older) abort on $((arith)) and
+# lack the `command` builtin, so neither may appear in shipped scripts.
+if grep -n '\$((\|command -v' \
+	"$ROOT/installer/install.sh" \
+	"$ROOT/router/tailscale" \
+	"$ROOT/router/tailscale-init" \
+	"$ROOT/router/tailscale-boot" \
+	"$ROOT/router/tailscale-openwrt-init"; then
+	echo "shipped scripts must not use \$((arith)) or 'command -v'" >&2
+	exit 1
+fi
+
 sed \
 	-e 's|__DEFAULT_BASE_URL__|http://test.invalid/files|g' \
 	-e 's|__INSTALLER_FILE__|install-http.sh|g' \
