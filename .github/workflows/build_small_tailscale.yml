@@ -30,8 +30,8 @@ permissions:
 
 env:
   DEFAULT_TAILSCALE_REF: v1.98.8
-  UPX_VERSION: 5.2.0
-  UPX_AMD64_SHA256: 3db5d3294707439db97866feab8d75d800f028f48481a40547411824da4288a1
+  UPX_VERSION: 4.2.4
+  UPX_AMD64_SHA256: 75cab4e57ab72fb4585ee45ff36388d280c7afd72aa03e8d4b9c3cbddb474193
 
 jobs:
   build:
@@ -296,7 +296,7 @@ jobs:
         run: |
           set -euo pipefail
           cp "dist/${BINARY_NAME}" "dist/${BINARY_NAME}-upx"
-          upx --best --lzma "dist/${BINARY_NAME}-upx"
+          upx --best --no-lzma "dist/${BINARY_NAME}-upx"
           upx -t "dist/${BINARY_NAME}-upx"
           chmod 755 "dist/${BINARY_NAME}-upx"
 
