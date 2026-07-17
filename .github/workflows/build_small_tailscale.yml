@@ -6,7 +6,7 @@ on:
       tailscale_ref:
         description: Tailscale tag, branch or commit to build
         required: true
-        default: v1.98.8
+        default: v1.98.9
       release_tag:
         description: Release tag to create; leave empty to build artifacts only
         required: false
@@ -29,7 +29,7 @@ permissions:
   contents: read
 
 env:
-  DEFAULT_TAILSCALE_REF: v1.98.8
+  DEFAULT_TAILSCALE_REF: v1.98.9
   UPX_VERSION: 4.2.4
   UPX_AMD64_SHA256: 75cab4e57ab72fb4585ee45ff36388d280c7afd72aa03e8d4b9c3cbddb474193
 
