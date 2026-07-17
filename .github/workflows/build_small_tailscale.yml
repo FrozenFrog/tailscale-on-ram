@@ -30,8 +30,14 @@ permissions:
 
 env:
   DEFAULT_TAILSCALE_REF: v1.98.9
+  # General packer: 4.2.4 NRV stub is accepted by old-kernel ELF loaders
+  # that reject newer stubs. Used for softfloat MIPS and ARM.
   UPX_VERSION: 4.2.4
   UPX_AMD64_SHA256: 75cab4e57ab72fb4585ee45ff36388d280c7afd72aa03e8d4b9c3cbddb474193
+  # Hardfloat MIPS packer: 4.2.4's stub trips qemu-user FP emulation
+  # (float64nan) in the QEMU test; 5.2.0 --lzma is the combo that passed.
+  UPX_HARDFLOAT_VERSION: 5.2.0
+  UPX_HARDFLOAT_AMD64_SHA256: 3db5d3294707439db97866feab8d75d800f028f48481a40547411824da4288a1
 
 jobs:
   build:
@@ -282,13 +288,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          archive="upx-${UPX_VERSION}-amd64_linux.tar.xz"
-          url="https://github.com/upx/upx/releases/download/v${UPX_VERSION}/${archive}"
-          curl -fsSL "$url" -o "/tmp/$archive"
-          echo "${UPX_AMD64_SHA256}  /tmp/$archive" | sha256sum -c -
-          tar -xJf "/tmp/$archive" -C /tmp
-          sudo install -m 0755 "/tmp/upx-${UPX_VERSION}-amd64_linux/upx" /usr/local/bin/upx
-          upx --version
+          install_upx() {
+            ver="$1"; sha="$2"; dest="$3"
+            archive="upx-${ver}-amd64_linux.tar.xz"
+            url="https://github.com/upx/upx/releases/download/v${ver}/${archive}"
+            curl -fsSL "$url" -o "/tmp/$archive"
+            echo "${sha}  /tmp/$archive" | sha256sum -c -
+            tar -xJf "/tmp/$archive" -C /tmp
+            sudo install -m 0755 "/tmp/upx-${ver}-amd64_linux/upx" "$dest"
+          }
+          install_upx "$UPX_VERSION" "$UPX_AMD64_SHA256" /usr/local/bin/upx
+          install_upx "$UPX_HARDFLOAT_VERSION" "$UPX_HARDFLOAT_AMD64_SHA256" /usr/local/bin/upx-hardfloat
+          upx --version | head -1
+          upx-hardfloat --version | head -1
 
       - name: Create maximum-compression UPX variant
         if: matrix.upx
@@ -296,8 +308,20 @@ jobs:
         run: |
           set -euo pipefail
           cp "dist/${BINARY_NAME}" "dist/${BINARY_NAME}-upx"
-          upx --best --no-lzma "dist/${BINARY_NAME}-upx"
-          upx -t "dist/${BINARY_NAME}-upx"
+          # softfloat/ARM use 4.2.4 --no-lzma: its NRV stub is what old-kernel
+          # ELF loaders accept (the exec-compat fix), verified running on a
+          # real MIPS kernel. hardfloat MIPS instead uses 5.2.0 --lzma: the
+          # 4.2.4 stub crashes hardfloat under qemu-user (float64nan) whatever
+          # the compression, and 5.2.0 --lzma is the combo that passes the
+          # QEMU gate. Test each with the packer that produced it, since a
+          # given UPX only reliably verifies its own stub format.
+          if [ "${BINARY_NAME#*hardfloat}" != "$BINARY_NAME" ]; then
+            upx-hardfloat --best --lzma "dist/${BINARY_NAME}-upx"
+            upx-hardfloat -t "dist/${BINARY_NAME}-upx"
+          else
+            upx --best --no-lzma "dist/${BINARY_NAME}-upx"
+            upx -t "dist/${BINARY_NAME}-upx"
+          fi
           chmod 755 "dist/${BINARY_NAME}-upx"
 
       - name: Test plain and UPX binaries with QEMU
