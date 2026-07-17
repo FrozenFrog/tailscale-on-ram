@@ -132,14 +132,27 @@ start() {
 	fi
 
 	rm -f "$SOCKET"
-	"$DIR/tailscaled" \
+	# Detach the daemon from the login session: BusyBox telnetd on some
+	# firmwares HUPs everything still in the session when it closes, which
+	# used to kill tailscaled together with the telnet window that started
+	# it. setsid moves it to a fresh session (no controlling tty); nohup at
+	# least shields it from the HUP. Both exec the command, so $! stays the
+	# daemon's pid. The static BusyBox in $DIR/bb ships setsid even when
+	# the firmware has neither.
+	DETACH=
+	if have setsid; then
+		DETACH=setsid
+	elif have nohup; then
+		DETACH=nohup
+	fi
+	$DETACH "$DIR/tailscaled" \
 		--state="$STATE_FILE" \
 		--statedir="$STATE_DIR" \
 		--socket="$SOCKET" \
 		--tun="$TUN" \
 		--port="$PORT" \
 		--no-logs-no-support \
-		>"$LOGFILE" 2>&1 &
+		</dev/null >"$LOGFILE" 2>&1 &
 	pid=$!
 	echo "$pid" > "$PIDFILE"
 
