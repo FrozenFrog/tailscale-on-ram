@@ -528,6 +528,6 @@ jobs:
             retry gh release create "$tag" dist-release/* \
               --repo "$GITHUB_REPOSITORY" \
               --target "$GITHUB_SHA" \
-              --title "Small Tailscale $tag" \
+              --title "$tag" \
               --notes "Bản tối giản cho router Linux MIPS/ARM, gồm binary thường và UPX khi nền tảng hỗ trợ."
           fi
