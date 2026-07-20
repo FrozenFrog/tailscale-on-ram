@@ -203,7 +203,7 @@ Ví dụ thiết bị có RAM ở `/var/tmp` và flash ghi được ở `/mnt`:
 export TAILSCALE_DIR=/var/tmp/tailscale
 export TAILSCALE_STATE_DIR=/mnt/tailscale-state
 export TAILSCALE_ENABLER_CONF=/mnt/tailscale-enabler.conf
-export TAILSCALE_BOOT_SCRIPT=/mnt/tailscale-start.sh
+export TAILSCALE_BOOT_SCRIPT=/mnt/tailscale-boot.sh
 sh /var/tmp/install-tailscale.sh mipsle plain http://SERVER/path
 ```
 
