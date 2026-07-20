@@ -81,7 +81,6 @@ tun_available() {
 
 fallback_to_userspace() {
 	echo "TUN device is unavailable; falling back to userspace-networking" >&2
-	echo "exit node and subnet routing are disabled on this device" >&2
 	TUN=userspace-networking
 
 	[ -f "$CONF" ] || return 0

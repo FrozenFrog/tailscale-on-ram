@@ -277,9 +277,10 @@ khởi động, `tailscale-init` tự nạp module `tun` (modprobe/insmod), tạ
 `/dev/net/tun` và kiểm tra driver qua `/proc/misc`.
 
 Nếu thiết bị không có driver TUN, script tự fallback về
-`userspace-networking` (Tailscale SSH vẫn chạy, nhưng exit node và subnet
-route bị tắt) và ghi lựa chọn đó ngược vào file cấu hình để các lần khởi động
-sau không phải dò lại. Trên firmware Padavan, chạy thêm `mtd_storage.sh save`
+`userspace-networking` (Tailscale SSH vẫn chạy; exit node và subnet route vẫn
+hoạt động ở chế độ userspace nhưng chỉ chuyển tiếp TCP/UDP, ICMP một phần và
+hiệu năng thấp hơn kernel mode) và ghi lựa chọn đó ngược vào file cấu hình để
+các lần khởi động sau không phải dò lại. Trên firmware Padavan, chạy thêm `mtd_storage.sh save`
 để giữ file cấu hình trong `/etc/storage` qua reboot. Sau này nếu cài được
 driver TUN (OpenWrt: gói `kmod-tun`), sửa lại `TAILSCALE_TUN='tailscale0'`
 trong file cấu hình rồi restart.
