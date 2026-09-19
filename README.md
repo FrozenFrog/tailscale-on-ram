@@ -74,16 +74,14 @@ ghi được trước khi chạy installer.
 Tải installer trực tiếp từ GitHub Release. Ví dụ cho thiết bị `mipsle`:
 
 ```sh
-TAG=v1.98.8
-wget -O /tmp/install-tailscale.sh https://github.com/FrozenFrog/tailscale-on-ram/releases/download/$TAG/install-https.sh
+wget -O /tmp/install-tailscale.sh https://github.com/FrozenFrog/tailscale-on-ram/releases/latest/download/install-https.sh
 sh /tmp/install-tailscale.sh mipsle plain
 ```
 
 Ví dụ dùng bản UPX cho thiết bị `arm7`:
 
 ```sh
-TAG=v1.98.8
-wget -O /tmp/install-tailscale.sh https://github.com/FrozenFrog/tailscale-on-ram/releases/download/$TAG/install-https.sh
+wget -O /tmp/install-tailscale.sh https://github.com/FrozenFrog/tailscale-on-ram/releases/latest/download/install-https.sh
 sh /tmp/install-tailscale.sh arm7 upx
 ```
 
@@ -97,7 +95,7 @@ bằng SHA-256.
 release URL khác bằng tham số thứ ba:
 
 ```sh
-sh /tmp/install-tailscale.sh mips plain https://github.com/OWNER/REPO/releases/download/TAG
+sh /tmp/install-tailscale.sh mips plain https://github.com/OWNER/REPO/releases/latest/download
 ```
 
 ## Cách 2: wget chỉ tải được HTTP
@@ -107,9 +105,8 @@ là tải file nén `tailscale-release-files.tar.gz` trong release rồi giải 
 thẳng vào thư mục web:
 
 ```sh
-TAG=v1.98.8
 cd /var/www/openwrt-tailscale-enabler
-wget https://github.com/FrozenFrog/tailscale-on-ram/releases/download/$TAG/tailscale-release-files.tar.gz
+wget https://github.com/FrozenFrog/tailscale-on-ram/releases/latest/download/tailscale-release-files.tar.gz
 tar -xzf tailscale-release-files.tar.gz
 rm tailscale-release-files.tar.gz
 ```
