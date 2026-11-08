@@ -282,8 +282,20 @@ jobs:
             ver="$1"; sha="$2"; dest="$3"
             archive="upx-${ver}-amd64_linux.tar.xz"
             url="https://github.com/upx/upx/releases/download/v${ver}/${archive}"
-            curl -fsSL "$url" -o "/tmp/$archive"
-            echo "${sha}  /tmp/$archive" | sha256sum -c -
+            # github.com release downloads occasionally return 504; retry
+            # (including re-checking the hash) instead of failing the build.
+            ok=0
+            for attempt in 1 2 3 4 5; do
+              if curl -fsSL --retry 3 --retry-delay 5 --retry-all-errors \
+                  "$url" -o "/tmp/$archive" \
+                && echo "${sha}  /tmp/$archive" | sha256sum -c -; then
+                ok=1
+                break
+              fi
+              echo "UPX ${ver} download attempt ${attempt} failed" >&2
+              sleep $((attempt * 5))
+            done
+            [ "$ok" = 1 ] || { echo "Cannot download UPX ${ver}" >&2; exit 1; }
             tar -xJf "/tmp/$archive" -C /tmp
             sudo install -m 0755 "/tmp/upx-${ver}-amd64_linux/upx" "$dest"
           }
