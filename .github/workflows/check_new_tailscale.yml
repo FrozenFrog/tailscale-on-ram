@@ -1,0 +1,66 @@
+name: Check for new Tailscale release
+
+on:
+  schedule:
+    # Once a day, 02:17 UTC (off the top of the hour to avoid GitHub's queue).
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  check:
+    name: Check upstream and trigger build
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Find latest stable Tailscale tag
+        id: latest
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Stable Tailscale releases are vX.Y.Z with an even minor (odd = unstable).
+          latest="$(
+            git ls-remote --tags --refs https://github.com/tailscale/tailscale.git 'v*' \
+              | awk '{sub("refs/tags/", "", $2); print $2}' \
+              | grep -E '^v[0-9]+\.[0-9]*[02468]\.[0-9]+$' \
+              | sort -V | tail -n 1
+          )"
+          if [[ -z "$latest" ]]; then
+            echo "Could not determine the latest Tailscale tag" >&2
+            exit 1
+          fi
+          echo "Latest upstream stable tag: $latest"
+          echo "tag=$latest" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger build if there is no release for it yet
+        shell: bash
+        env:
+          TAG: ${{ steps.latest.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; nothing to do."
+            exit 0
+          fi
+
+          # Don't start a duplicate if a build for this tag is already running.
+          running="$(
+            gh run list --repo "$GITHUB_REPOSITORY" --workflow build_small_tailscale.yml \
+              --json status,displayTitle,databaseId --limit 20 \
+              --jq '[.[] | select(.status != "completed")] | length'
+          )"
+          if [[ "$running" != "0" ]]; then
+            echo "A build is already in progress; will re-check tomorrow."
+            exit 0
+          fi
+
+          echo "New Tailscale release $TAG: dispatching build + release"
+          gh workflow run build_small_tailscale.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "${GITHUB_REF_NAME}" \
+            -f tailscale_ref="$TAG" \
+            -f release_tag="$TAG"
